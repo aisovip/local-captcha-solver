@@ -1,3 +1,5 @@
+import type { SliderProvider } from './types';
+
 export interface SliderRect {
   x: number;
   y: number;
@@ -7,7 +9,7 @@ export interface SliderRect {
 
 export interface SliderChallengeSnapshot {
   revision: string;
-  provider: 'geetest' | 'geetest-v4' | 'generic';
+  provider: SliderProvider;
   challenge: SliderRect;
   image: SliderRect;
   backgroundDataUrl?: string;
@@ -31,7 +33,7 @@ export interface SliderPieceMask {
 }
 
 export interface SliderActivatorSnapshot {
-  provider: 'geetest' | 'geetest-v4' | 'generic';
+  provider: SliderProvider;
   rect: SliderRect;
 }
 
@@ -50,6 +52,11 @@ const HANDLE_HINT_SELECTORS = [
   '[data-slider-handle]',
   '[role="slider"]',
   '[draggable="true"]',
+  '[id*="slider"]',
+  '[id*="slide"]',
+  '[id*="drag"]',
+  '[id*="handle"]',
+  '[id*="thumb"]',
   '[class*="slider"]',
   '[class*="slide"]',
   '[class*="drag"]',
@@ -59,6 +66,10 @@ const HANDLE_HINT_SELECTORS = [
 
 const TRACK_HINT_SELECTORS = [
   '[data-slider-track]',
+  '[id*="slider"]',
+  '[id*="sliding"]',
+  '[id*="slide"]',
+  '[id*="drag"]',
   '[class*="track"]',
   '[class*="rail"]',
   '[class*="control"]',
@@ -80,6 +91,10 @@ const IMAGE_HINT_SELECTORS = [
 
 const PIECE_HINT_SELECTORS = [
   '[data-slider-piece]',
+  '[id*="piece"]',
+  '[id*="jigsaw"]',
+  '[id*="slice"]',
+  '[id*="puzzle"]',
   '[class*="piece"]',
   '[class*="jigsaw"]',
   '[class*="slice"]',
@@ -100,8 +115,8 @@ const TRACK_CONTROL_SELECTOR = 'button, [role="button"], [draggable="true"], [cl
 const HANDLE_SEMANTIC_PATTERN = /(^|[-_\s])(slider|slide|drag|handle|thumb)([-_\s]|$)/i;
 const HANDLE_CONTROL_PATTERN = /(^|[-_\s])(handle|thumb|button|btn)([-_\s]|$)/i;
 const NON_HANDLE_LAYER_PATTERN = /(^|[-_\s])(indicator|progress|fill|track|rail)([-_\s]|$)/i;
-const TRACK_SEMANTIC_PATTERN = /(^|[-_\s])(track|rail|control|bar|slider|slide|drag)([-_\s]|$)/i;
-const PIECE_SEMANTIC_PATTERN = /(^|[-_\s])(piece|jigsaw|slice)([-_\s]|$)/i;
+const TRACK_SEMANTIC_PATTERN = /(^|[-_\s])(track|rail|control|bar|slider|sliding|slide|drag)([-_\s]|$)/i;
+const PIECE_SEMANTIC_PATTERN = /(^|[-_\s])(piece|jigsaw|slice|puzzle)([-_\s]|$)/i;
 const ACTIVATION_ACTION_PATTERN = /(verify|verification|slide|drag|swipe|radar|验证|校验|滑动|拖动)/i;
 const INACTIVE_CONTROL_PATTERN = /(^|[-_\s])(success|passed|complete|error|fail|disabled|loading|waiting|wait|verifying|freeze)([-_\s]|$)|成功|完成|失败|禁用/i;
 
@@ -334,8 +349,9 @@ async function maskForPiece(piece: { element: Element; rect: SliderRect }, image
   };
 }
 
-function providerFor(root: Element): 'geetest' | 'geetest-v4' | 'generic' {
+function providerFor(root: Element): SliderProvider {
   const value = `${root.id} ${root.className} ${root.getAttribute('data-provider') ?? ''}`.toLowerCase();
+  if (value.includes('aliyun')) return 'aliyun';
   if (!value.includes('geetest')) return 'generic';
   return root.querySelector('.geetest_canvas_bg') === null ? 'geetest-v4' : 'geetest';
 }

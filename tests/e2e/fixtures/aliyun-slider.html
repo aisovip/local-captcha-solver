@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>Captcha Helper Aliyun slider fixture</title>
+    <style>
+      body { margin: 0; padding: 40px; background: #eef2ef; color: #203027; font: 16px system-ui, sans-serif; }
+      main { width: 332px; margin: 0 auto; padding: 24px; background: white; border: 1px solid #c8d4cc; border-radius: 8px; }
+      h1 { margin: 0 0 16px; font-size: 20px; }
+      #aliyunCaptcha-window-popup { position: relative; width: 300px; height: 248px; }
+      #aliyunCaptcha-img-box { position: absolute; inset: 0 auto auto 0; width: 300px; height: 200px; overflow: hidden; }
+      #aliyunCaptcha-img { display: block; width: 300px; height: 200px; }
+      #aliyunCaptcha-puzzle { position: absolute; left: 0; top: 0; width: 52px; height: 200px; pointer-events: none; }
+      #aliyunCaptcha-sliding-body { position: absolute; left: 0; top: 208px; width: 300px; height: 40px; background: #f2f3f5; }
+      #aliyunCaptcha-sliding-slider { box-sizing: border-box; position: absolute; z-index: 2; left: 0; top: 0; width: 40px; height: 40px; background: #fff; border: 1px solid #c8cdd3; border-radius: 3px; cursor: grab; touch-action: none; }
+      #aliyunCaptcha-sliding-text-box { display: grid; height: 40px; place-items: center; color: #9aa0a6; font-size: 14px; }
+      #aliyunCaptcha-result { min-height: 20px; margin-top: 14px; color: #286a49; font-weight: 650; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>阿里云拼图滑块测试页</h1>
+      <div id="aliyunCaptcha-window-popup" class="window-show">
+        <div id="aliyunCaptcha-img-box" class="puzzle">
+          <img id="aliyunCaptcha-img" class="puzzle" alt="">
+          <img id="aliyunCaptcha-puzzle" alt="">
+        </div>
+        <div id="aliyunCaptcha-sliding-body" class="null">
+          <div id="aliyunCaptcha-sliding-slider" class="slider-move initial" aria-label="滑块"></div>
+          <div id="aliyunCaptcha-sliding-text-box" class="aliyunCaptcha-sliding-text-box">拖动滑块完成拼图</div>
+        </div>
+      </div>
+      <div id="aliyunCaptcha-result" role="status" aria-live="polite"></div>
+    </main>
+    <script>
+      const image = document.querySelector('#aliyunCaptcha-img');
+      const piece = document.querySelector('#aliyunCaptcha-puzzle');
+      const handle = document.querySelector('#aliyunCaptcha-sliding-slider');
+      const status = document.querySelector('#aliyunCaptcha-result');
+      const shapeOnly = new URLSearchParams(location.search).get('mode') === 'shape';
+      const gapX = 208;
+      const distractorX = 112;
+      const gapY = 74;
+      const pieceInsetX = 2;
+      const pieceSize = 48;
+      const backgroundCanvas = document.createElement('canvas');
+      backgroundCanvas.width = 300;
+      backgroundCanvas.height = 200;
+      const background = backgroundCanvas.getContext('2d');
+      const gradient = background.createLinearGradient(0, 0, 300, 200);
+      gradient.addColorStop(0, '#76a7c6');
+      gradient.addColorStop(1, '#dec07e');
+      background.fillStyle = gradient;
+      background.fillRect(0, 0, 300, 200);
+      for (let index = 0; index < 24; index += 1) {
+        background.fillStyle = `hsla(${index * 19}, 46%, 31%, .27)`;
+        background.beginPath();
+        background.arc(14 + index * 19, 18 + (index * 43) % 166, 10 + index % 8, 0, Math.PI * 2);
+        background.fill();
+      }
+      const pieceCanvas = document.createElement('canvas');
+      pieceCanvas.width = 52;
+      pieceCanvas.height = 200;
+      const pieceContext = pieceCanvas.getContext('2d');
+      const piecePixels = pieceContext.createImageData(pieceCanvas.width, pieceCanvas.height);
+      const backgroundPixels = background.getImageData(0, 0, backgroundCanvas.width, backgroundCanvas.height);
+      for (let y = 0; y < pieceSize; y += 1) for (let x = 0; x < pieceSize; x += 1) {
+        const opaque = !(x >= 17 && x < 31 && y < 10);
+        if (!opaque) continue;
+        const base = 65 + x * 2 + y;
+        const red = shapeOnly ? 110 : base + ((((x * 37 + y * 61 + x * y * 7) % 101) / 100) - .5) * 15;
+        const green = Math.min(255, red + 7);
+        const blue = Math.max(0, red - 5);
+        const pieceIndex = ((gapY + y) * pieceCanvas.width + pieceInsetX + x) * 4;
+        piecePixels.data[pieceIndex] = red;
+        piecePixels.data[pieceIndex + 1] = green;
+        piecePixels.data[pieceIndex + 2] = blue;
+        piecePixels.data[pieceIndex + 3] = 255;
+        const backgroundIndex = ((gapY + y) * backgroundCanvas.width + gapX + x) * 4;
+        backgroundPixels.data[backgroundIndex] = shapeOnly ? 42 : Math.round(red * .52 + 18);
+        backgroundPixels.data[backgroundIndex + 1] = shapeOnly ? 42 : Math.round(green * .52 + 18);
+        backgroundPixels.data[backgroundIndex + 2] = shapeOnly ? 42 : Math.round(blue * .52 + 18);
+        backgroundPixels.data[backgroundIndex + 3] = 255;
+        if (!shapeOnly) {
+          const distractorIndex = ((gapY + y) * backgroundCanvas.width + distractorX + x) * 4;
+          backgroundPixels.data[distractorIndex] = Math.round(base * .52 + 18);
+          backgroundPixels.data[distractorIndex + 1] = Math.round((base + 7) * .52 + 18);
+          backgroundPixels.data[distractorIndex + 2] = Math.round((base - 5) * .52 + 18);
+          backgroundPixels.data[distractorIndex + 3] = 255;
+        }
+      }
+      background.putImageData(backgroundPixels, 0, 0);
+      pieceContext.putImageData(piecePixels, 0, 0);
+      image.src = backgroundCanvas.toDataURL('image/png');
+      piece.src = pieceCanvas.toDataURL('image/png');
+
+      let dragging = false;
+      let startX = 0;
+      let startLeft = 0;
+      handle.addEventListener('pointerdown', (event) => {
+        dragging = true;
+        startX = event.clientX;
+        startLeft = handle.offsetLeft;
+        handle.setPointerCapture(event.pointerId);
+      });
+      handle.addEventListener('pointermove', (event) => {
+        if (!dragging) return;
+        const left = Math.max(0, Math.min(260, startLeft + event.clientX - startX));
+        handle.style.left = `${left}px`;
+        piece.style.left = `${left}px`;
+      });
+      handle.addEventListener('pointerup', () => {
+        if (!dragging) return;
+        dragging = false;
+        const pieceLeft = handle.offsetLeft + pieceInsetX;
+        if (Math.abs(pieceLeft - gapX) <= 7) {
+          status.textContent = '滑动成功!';
+          status.className = 'aliyunCaptcha-success';
+        } else {
+          status.textContent = '验证失败，请重试!';
+          status.className = 'aliyunCaptcha-fail';
+          handle.style.left = '0px';
+          piece.style.left = '0px';
+        }
+      });
+    </script>
+  </body>
+</html>

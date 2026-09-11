@@ -35,7 +35,7 @@ const GEOMETRY_CONFIDENCE_CAP = .72;
 const MINIMUM_SHAPE_COMPLEXITY = .035;
 const MINIMUM_SHAPE_EDGE_EVIDENCE = .58;
 const MINIMUM_SHAPE_EDGE_SEPARATION = .25;
-const SHAPE_CONFIDENCE_CAP = .68;
+const SHAPE_CONFIDENCE_CAP = .72;
 const MINIMUM_REFERENCE_DIFFERENCE = 18;
 const MINIMUM_REFERENCE_COVERAGE = .35;
 const MINIMUM_REFERENCE_SEPARATION = .3;
@@ -165,7 +165,7 @@ function regionContrast(luminanceMap: Float32Array, imageWidth: number, x: numbe
   return Math.abs(insideSum / regions.inside.length - ringSum / regions.ring.length);
 }
 
-function textureCorrelation(backgroundLuminance: Float32Array, imageWidth: number, x: number, y: number, mask: NonNullable<GapLocatorInput['pieceMask']>): number | undefined {
+function textureCorrelation(backgroundLuminance: Float32Array, imageWidth: number, x: number, y: number, mask: NonNullable<GapLocatorInput['pieceMask']>): { tone: number; detail?: number } | undefined {
   if (mask.luminance?.length !== mask.alpha.length) return undefined;
   let pieceSum = 0;
   let backgroundSum = 0;
@@ -184,6 +184,9 @@ function textureCorrelation(backgroundLuminance: Float32Array, imageWidth: numbe
   let covariance = 0;
   let pieceVariance = 0;
   let backgroundVariance = 0;
+  let detailProduct = 0;
+  let pieceDetailEnergy = 0;
+  let backgroundDetailEnergy = 0;
   for (let sampleY = margin; sampleY < mask.height - margin; sampleY += 2) for (let sampleX = margin; sampleX < mask.width - margin; sampleX += 2) {
     const index = sampleY * mask.width + sampleX;
     if (mask.alpha[index]! < 220 || mask.alpha[index - 1]! < 220 || mask.alpha[index + 1]! < 220 || mask.alpha[index - mask.width]! < 220 || mask.alpha[index + mask.width]! < 220) continue;
@@ -192,9 +195,22 @@ function textureCorrelation(backgroundLuminance: Float32Array, imageWidth: numbe
     covariance += pieceDelta * backgroundDelta;
     pieceVariance += pieceDelta * pieceDelta;
     backgroundVariance += backgroundDelta * backgroundDelta;
+    const pieceDx = mask.luminance[index + 1]! - mask.luminance[index - 1]!;
+    const pieceDy = mask.luminance[index + mask.width]! - mask.luminance[index - mask.width]!;
+    const backgroundIndex = (y + sampleY) * imageWidth + x + sampleX;
+    const backgroundDx = backgroundLuminance[backgroundIndex + 1]! - backgroundLuminance[backgroundIndex - 1]!;
+    const backgroundDy = backgroundLuminance[backgroundIndex + imageWidth]! - backgroundLuminance[backgroundIndex - imageWidth]!;
+    detailProduct += pieceDx * backgroundDx + pieceDy * backgroundDy;
+    pieceDetailEnergy += pieceDx * pieceDx + pieceDy * pieceDy;
+    backgroundDetailEnergy += backgroundDx * backgroundDx + backgroundDy * backgroundDy;
   }
   const denominator = Math.sqrt(pieceVariance * backgroundVariance);
-  return denominator < 1 ? undefined : covariance / denominator;
+  if (denominator < 1) return undefined;
+  const detailDenominator = Math.sqrt(pieceDetailEnergy * backgroundDetailEnergy);
+  return {
+    tone: covariance / denominator,
+    ...(detailDenominator < 1 ? {} : { detail: detailProduct / detailDenominator }),
+  };
 }
 
 function locateReferenceDifference(image: PixelImage, reference: PixelImage, mask: NonNullable<GapLocatorInput['pieceMask']>, minimumX: number): GapLocation | undefined {
@@ -245,7 +261,7 @@ function locateMaskedGap(image: PixelImage, luminanceMap: Float32Array, gradient
   const yRadius = Math.max(4, Math.round(mask.height * .12));
   const minimumY = Math.max(1, Math.round(mask.offsetY) - yRadius);
   const maximumY = Math.min(image.height - mask.height - 2, Math.round(mask.offsetY) + yRadius);
-  const candidates: Array<{ x: number; y: number; score: number; edgeScore: number; edgeEvidence: number; regionEvidence: number; regionScore?: number; textureScore?: number }> = [];
+  const candidates: Array<{ x: number; y: number; score: number; edgeScore: number; edgeEvidence: number; regionEvidence: number; regionScore?: number; textureScore?: number; detailScore?: number }> = [];
   for (let y = minimumY; y <= maximumY; y += 1) for (let x = minimumX; x + mask.width < image.width - 1; x += 1) {
     const edgeScore = shapeEdgeScore(gradient, image.width, x, y, edges);
     let interiorScore = 0;
@@ -256,20 +272,34 @@ function locateMaskedGap(image: PixelImage, luminanceMap: Float32Array, gradient
       interiorCount += 1;
     }
     const averageEdgeScore = edgeScore - (interiorCount === 0 ? 0 : interiorScore / interiorCount * .12);
-    const textureScore = hasPieceTexture ? textureCorrelation(luminanceMap, image.width, x, y, mask) : undefined;
+    const texture = hasPieceTexture ? textureCorrelation(luminanceMap, image.width, x, y, mask) : undefined;
     const regionScore = regions === undefined ? undefined : regionContrast(luminanceMap, image.width, x, y, regions);
-    candidates.push({ x, y, score: averageEdgeScore, edgeScore: averageEdgeScore, edgeEvidence: 0, regionEvidence: 0, ...(regionScore === undefined ? {} : { regionScore }), ...(textureScore === undefined ? {} : { textureScore }) });
+    candidates.push({
+      x,
+      y,
+      score: averageEdgeScore,
+      edgeScore: averageEdgeScore,
+      edgeEvidence: 0,
+      regionEvidence: 0,
+      ...(regionScore === undefined ? {} : { regionScore }),
+      ...(texture === undefined ? {} : { textureScore: texture.tone, ...(texture.detail === undefined ? {} : { detailScore: texture.detail }) }),
+    });
   }
   if (hasPieceTexture) {
-    const indexed = new Map(candidates.map((candidate) => [`${candidate.x}:${candidate.y}`, candidate.textureScore ?? -1]));
+    const indexedTexture = new Map(candidates.map((candidate) => [`${candidate.x}:${candidate.y}`, candidate.textureScore ?? -1]));
+    const indexedDetail = new Map(candidates.map((candidate) => [`${candidate.x}:${candidate.y}`, candidate.detailScore ?? -1]));
     const radiusX = Math.max(1, Math.round(mask.width * .04));
     const radiusY = Math.max(1, Math.round(mask.height * .04));
     for (const candidate of candidates) {
       let nearbyTexture = candidate.textureScore ?? -1;
+      let nearbyDetail = candidate.detailScore ?? -1;
       for (let offsetY = -radiusY; offsetY <= radiusY; offsetY += 1) for (let offsetX = -radiusX; offsetX <= radiusX; offsetX += 1) {
-        nearbyTexture = Math.max(nearbyTexture, indexed.get(`${candidate.x + offsetX}:${candidate.y + offsetY}`) ?? -1);
+        const key = `${candidate.x + offsetX}:${candidate.y + offsetY}`;
+        nearbyTexture = Math.max(nearbyTexture, indexedTexture.get(key) ?? -1);
+        nearbyDetail = Math.max(nearbyDetail, indexedDetail.get(key) ?? -1);
       }
       candidate.textureScore = nearbyTexture;
+      candidate.detailScore = nearbyDetail;
     }
   }
   const orderedEdges = candidates.map((candidate) => candidate.edgeScore).sort((left, right) => left - right);
@@ -287,7 +317,11 @@ function locateMaskedGap(image: PixelImage, luminanceMap: Float32Array, gradient
     const regionAbsolute = Math.min(1, Math.max(0, ((candidate.regionScore ?? 0) - 10) / 70));
     candidate.edgeEvidence = Math.sqrt(normalizedEdge * edgeAbsolute);
     candidate.regionEvidence = Math.sqrt(normalizedRegion * regionAbsolute);
-    candidate.score = candidate.edgeEvidence * 30 + Math.max(0, candidate.textureScore ?? 0) * 60 + candidate.regionEvidence * 40;
+    const textureScore = Math.max(0, candidate.textureScore ?? 0);
+    const textureEvidenceScore = candidate.detailScore === undefined || candidate.detailScore < 0
+      ? textureScore * 60
+      : textureScore * 42 + Math.max(0, candidate.detailScore) * 18;
+    candidate.score = candidate.edgeEvidence * 30 + textureEvidenceScore + candidate.regionEvidence * 40;
   }
   candidates.sort((left, right) => right.score - left.score);
   const best = candidates[0];
@@ -310,17 +344,23 @@ function locateMaskedGap(image: PixelImage, luminanceMap: Float32Array, gradient
     .filter((candidate) => Math.hypot(candidate.x - best.x, candidate.y - best.y) >= Math.max(mask.width, mask.height) * .75)
     .reduce((maximum, candidate) => Math.max(maximum, candidate.textureScore ?? 0), 0);
   const textureSeparation = best.textureScore === undefined ? 0 : (best.textureScore - textureCompetitor) / Math.max(best.textureScore, .01);
+  const detailEvidence = Math.min(1, Math.max(0, ((best.detailScore ?? 0) - .25) / .65));
+  const detailCompetitor = candidates
+    .filter((candidate) => Math.hypot(candidate.x - best.x, candidate.y - best.y) >= Math.max(mask.width, mask.height) * .75)
+    .reduce((maximum, candidate) => Math.max(maximum, candidate.detailScore ?? 0), 0);
+  const detailSeparation = best.detailScore === undefined ? 0 : (best.detailScore - detailCompetitor) / Math.max(best.detailScore, .01);
   const regionCompetitor = candidates
     .filter((candidate) => Math.hypot(candidate.x - best.x, candidate.y - best.y) >= Math.max(mask.width, mask.height) * .75)
     .reduce((maximum, candidate) => Math.max(maximum, candidate.regionScore ?? 0), 0);
   const regionSeparation = best.regionScore === undefined ? 0 : ((best.regionScore ?? 0) - regionCompetitor) / Math.max(best.regionScore ?? 0, 1);
   const edgeConfidence = localEdgeScore < 20 ? 0 : Math.max(0, edgeSeparation) * .6 + edgeEvidence * .4;
   const textureConfidence = (best.textureScore ?? 0) < .55 || textureSeparation < .25 ? 0 : textureSeparation * .55 + textureEvidence * .45;
+  const detailConfidence = (best.detailScore ?? 0) < .5 || detailSeparation < .25 ? 0 : detailSeparation * .55 + detailEvidence * .45;
   const regionConfidence = (best.regionScore ?? 0) < 25 || regionSeparation < .25 ? 0 : regionSeparation * .55 + best.regionEvidence * .45;
-  const evidence = [edgeEvidence, textureEvidence, best.regionEvidence].sort((left, right) => right - left);
+  const evidence = [edgeEvidence, textureEvidence, detailEvidence, best.regionEvidence].sort((left, right) => right - left);
   const combinedConfidence = separation * .6 + evidence[0]! * .4;
   const corroboratedConfidence = evidence[1]! < .35 || separation < .12 ? 0 : evidence[0]! * .55 + evidence[1]! * .45;
-  const confidence = Math.min(1, Math.max(edgeConfidence, textureConfidence, regionConfidence, combinedConfidence, corroboratedConfidence));
+  const confidence = Math.min(1, Math.max(edgeConfidence, textureConfidence, detailConfidence, regionConfidence, combinedConfidence, corroboratedConfidence));
   if (hasPieceTexture && (best.textureScore ?? -1) < MINIMUM_TEXTURE_CORRELATION) {
     const shapeComplexity = maskShapeComplexity(mask);
     const shapeCandidates = [...candidates].sort((left, right) => right.edgeEvidence - left.edgeEvidence);
@@ -330,7 +370,11 @@ function locateMaskedGap(image: PixelImage, luminanceMap: Float32Array, gradient
       const shapeSeparation = (shapeBest.edgeEvidence - (shapeCompetitor?.edgeEvidence ?? 0)) / Math.max(shapeBest.edgeEvidence, .01);
       const shapeConfidence = shapeSeparation * .6 + shapeBest.edgeEvidence * .4;
       if (shapeBest.edgeEvidence >= MINIMUM_SHAPE_EDGE_EVIDENCE && shapeSeparation >= MINIMUM_SHAPE_EDGE_SEPARATION && shapeConfidence >= MINIMUM_TEXTURE_CORRELATION) {
-        return { x: shapeBest.x, y: shapeBest.y, width: mask.width, height: mask.height, confidence: Math.min(SHAPE_CONFIDENCE_CAP, shapeConfidence), score: shapeBest.score, method: 'shape' };
+        const toneCorroboration = Math.min(1, Math.max(0, ((shapeBest.textureScore ?? 0) - .3) / .25));
+        const detailCorroboration = Math.min(1, Math.max(0, ((shapeBest.detailScore ?? 0) - .25) / .5));
+        const corroboration = Math.max(shapeBest.regionEvidence, toneCorroboration, detailCorroboration);
+        const calibratedConfidence = shapeConfidence * .65 + corroboration * .35;
+        return { x: shapeBest.x, y: shapeBest.y, width: mask.width, height: mask.height, confidence: Math.min(SHAPE_CONFIDENCE_CAP, calibratedConfidence), score: shapeBest.score, method: 'shape' };
       }
     }
     const geometryCandidates = [...candidates].sort((left, right) => {

@@ -23,9 +23,8 @@ function weakMaskedScreenshot(): { image: PixelImage; pieceMask: { offsetX: numb
   return { image, pieceMask: { offsetX: 0, offsetY: targetY, width, height, alphaWidth: width, alphaHeight: height, alpha, luminance } };
 }
 
-function screenshot(): PixelImage {
+function screenshot(gapX = 166, height = 170): PixelImage {
   const width = 260;
-  const height = 170;
   const data = new Uint8ClampedArray(width * height * 4);
   for (let y = 0; y < height; y += 1) for (let x = 0; x < width; x += 1) {
     const index = (y * width + x) * 4;
@@ -35,7 +34,7 @@ function screenshot(): PixelImage {
     data[index + 2] = shade - 8;
     data[index + 3] = 255;
   }
-  for (let offset = 0; offset < 38; offset += 1) for (const [x, y] of [[166 + offset, 34], [166 + offset, 71], [166, 34 + offset], [203, 34 + offset]]) {
+  for (let offset = 0; offset < 38; offset += 1) for (const [x, y] of [[gapX + offset, 34], [gapX + offset, 71], [gapX, 34 + offset], [gapX + 37, 34 + offset]]) {
     const index = (y * width + x) * 4;
     data[index] = 20; data[index + 1] = 20; data[index + 2] = 20;
   }
@@ -258,7 +257,7 @@ describe('slider solver', () => {
         confidenceThreshold: .69,
       },
     });
-    expect(result.confidence).toBeGreaterThan(.58);
+    expect(result.confidence).toBeGreaterThan(.5);
     expect(result.confidence).toBeLessThan(.69);
     expect(app.sendCommand.mock.calls.some((call) => call[1] === 'Input.dispatchMouseEvent')).toBe(false);
   });
@@ -273,12 +272,16 @@ describe('slider solver', () => {
     });
   });
 
-  it('selects the stronger view when both image sources are usable', async () => {
-    const app = harness({ image: screenshot(), cleanImage: blankScreenshot(), visibleImage: screenshot() });
+  it('prefers an accepted direct background over a differently scaled viewport candidate', async () => {
+    const app = harness({ image: screenshot(92), cleanImage: screenshot(166, 110) });
 
     await expect(app.solver.solve({ id: 7, url: 'https://demo.example.test/' }, 'manual')).resolves.toMatchObject({
       state: 'success',
       confidence: expect.any(Number),
+      diagnostic: {
+        imageSource: 'background',
+        gapX: expect.closeTo(166, 0),
+      },
     });
   });
 

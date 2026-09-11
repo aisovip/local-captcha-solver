@@ -204,6 +204,41 @@ describe('slider challenge outcome', () => {
     });
   });
 
+  it('discovers an Aliyun popup puzzle from its public component identifiers', async () => {
+    document.body.innerHTML = '<div id="aliyunCaptcha-window-popup" class="window-show"><div id="aliyunCaptcha-img-box" class="puzzle"><img id="aliyunCaptcha-img" class="puzzle" src="data:image/png;base64,AQ=="><img id="aliyunCaptcha-puzzle" src="data:image/png;base64,Ag=="></div><div id="aliyunCaptcha-sliding-body" class="null"><div id="aliyunCaptcha-sliding-slider" class="slider-move initial"></div><div id="aliyunCaptcha-sliding-text-box" class="aliyunCaptcha-sliding-text-box">拖动滑块完成拼图</div></div></div>';
+    const root = document.querySelector('#aliyunCaptcha-window-popup')!;
+    const imageBox = document.querySelector('#aliyunCaptcha-img-box')!;
+    const image = document.querySelector('#aliyunCaptcha-img')!;
+    const piece = document.querySelector('#aliyunCaptcha-puzzle')!;
+    const track = document.querySelector('#aliyunCaptcha-sliding-body')!;
+    const handle = document.querySelector('#aliyunCaptcha-sliding-slider')!;
+    const textBox = document.querySelector('#aliyunCaptcha-sliding-text-box')!;
+    const rects = new Map<Element, { x: number; y: number; width: number; height: number }>([
+      [root, { x: 474, y: 240, width: 332, height: 329 }],
+      [imageBox, { x: 490, y: 296, width: 300, height: 200 }],
+      [image, { x: 490, y: 296, width: 300, height: 200 }],
+      [piece, { x: 490, y: 296, width: 52, height: 200 }],
+      [track, { x: 490, y: 504, width: 300, height: 40 }],
+      [handle, { x: 490, y: 504, width: 40, height: 40 }],
+      [textBox, { x: 490, y: 504, width: 300, height: 40 }],
+    ]);
+    for (const element of rects.keys()) element.getBoundingClientRect = () => {
+      const rect = rects.get(element)!;
+      return { ...rect, left: rect.x, top: rect.y, right: rect.x + rect.width, bottom: rect.y + rect.height, toJSON: () => ({}) };
+    };
+
+    await expect(discoverSliderChallenge()).resolves.toMatchObject({
+      state: 'ready',
+      challenge: {
+        provider: 'aliyun',
+        challenge: { x: 474, y: 240, width: 332, height: 329 },
+        image: { x: 490, y: 296, width: 300, height: 200 },
+        track: { x: 490, y: 504, width: 300, height: 40 },
+        handle: { x: 490, y: 504, width: 40, height: 40 },
+      },
+    });
+  });
+
   it('uses the handle to activate a collapsed puzzle before its image is visible', async () => {
     document.body.innerHTML = '<div class="verification-widget"><div class="drag-control">Drag to verify<div class="drag-thumb"></div></div></div>';
     const root = document.querySelector('.verification-widget')!;

@@ -12,6 +12,7 @@ const pages = new Map([
   ['/dynamic.html', new URL('./dynamic.html', import.meta.url)],
   ['/ambiguous.html', new URL('./ambiguous.html', import.meta.url)],
   ['/slider.html', new URL('./slider.html', import.meta.url)],
+  ['/aliyun-slider.html', new URL('./aliyun-slider.html', import.meta.url)],
 ]);
 
 const images = new Map([

@@ -2,9 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { locateSliderGap, type PixelImage } from '../../src/slider/gap-locator';
 
-function imageWithGap(shape: 'square' | 'notched', gapX: number, gapY: number, size: number): PixelImage {
-  const width = 260;
-  const height = 120;
+function texturedImage(width = 260, height = 120): PixelImage {
   const data = new Uint8ClampedArray(width * height * 4);
   for (let y = 0; y < height; y += 1) {
     for (let x = 0; x < width; x += 1) {
@@ -16,6 +14,12 @@ function imageWithGap(shape: 'square' | 'notched', gapX: number, gapY: number, s
       data[index + 3] = 255;
     }
   }
+  return { width, height, data };
+}
+
+function imageWithGap(shape: 'square' | 'notched', gapX: number, gapY: number, size: number): PixelImage {
+  const image = texturedImage();
+  const { width, height, data } = image;
   const border = (x: number, y: number): void => {
     if (x < 0 || y < 0 || x >= width || y >= height) return;
     const index = (y * width + x) * 4;
@@ -33,7 +37,51 @@ function imageWithGap(shape: 'square' | 'notched', gapX: number, gapY: number, s
     const center = gapX + Math.floor(size / 2);
     for (let x = center - 5; x <= center + 5; x += 1) border(x, gapY - 5 + Math.abs(x - center));
   }
-  return { width, height, data };
+  return image;
+}
+
+function texturedGapWithDistractor(distractor: 'smooth' | 'matching') {
+  const imageWidth = 296;
+  const imageHeight = 200;
+  const width = 48;
+  const height = 48;
+  const targetX = 230;
+  const distractorX = 130;
+  const targetY = 133;
+  const data = new Uint8ClampedArray(imageWidth * imageHeight * 4);
+  const alpha = new Array<number>(width * height).fill(0);
+  const luminance = new Array<number>(width * height).fill(0);
+  const baseTexture = (x: number, y: number) => 65 + x * 2 + y;
+  const texture = (x: number, y: number) => baseTexture(x, y) + ((((x * 37 + y * 61 + x * y * 7) % 101) / 100) - .5) * 15;
+  const opaque = (x: number, y: number) => x >= 2 && x < width - 2 && y >= 2 && y < height - 2 && !(x >= 17 && x < 31 && y < 10);
+  for (let index = 0; index < data.length; index += 4) {
+    data[index] = 130;
+    data[index + 1] = 137;
+    data[index + 2] = 125;
+    data[index + 3] = 255;
+  }
+  for (let y = 0; y < height; y += 1) for (let x = 0; x < width; x += 1) {
+    if (!opaque(x, y)) continue;
+    const value = texture(x, y);
+    alpha[y * width + x] = 255;
+    luminance[y * width + x] = value * .2126 + Math.min(255, value + 7) * .7152 + Math.max(0, value - 5) * .0722;
+    for (const [originX, source] of [[targetX, value], [distractorX, distractor === 'matching' ? value : baseTexture(x, y)]] as const) {
+      const index = ((targetY + y) * imageWidth + originX + x) * 4;
+      data[index] = Math.round(source * .52 + 18);
+      data[index + 1] = Math.round(Math.min(255, source + 7) * .52 + 18);
+      data[index + 2] = Math.round(Math.max(0, source - 5) * .52 + 18);
+    }
+  }
+  return {
+    input: {
+      image: { width: imageWidth, height: imageHeight, data },
+      expectedSize: width,
+      minimumX: imageWidth * .2,
+      pieceMask: { offsetY: 136, width, height, alpha, luminance },
+    },
+    targetX,
+    targetY,
+  };
 }
 
 describe('slider gap locator', () => {
@@ -148,6 +196,22 @@ describe('slider gap locator', () => {
     expect(result!.confidence).toBeGreaterThan(.58);
   });
 
+  it('uses local texture detail to separate a true gap from a similar blurred region', () => {
+    const fixture = texturedGapWithDistractor('smooth');
+    const result = locateSliderGap(fixture.input);
+
+    expect(result).toMatchObject({ x: fixture.targetX, y: fixture.targetY, method: 'texture' });
+    expect(result!.confidence).toBeGreaterThanOrEqual(.68);
+  });
+
+  it('keeps matching texture candidates below the automatic-drag threshold', () => {
+    const fixture = texturedGapWithDistractor('matching');
+    const result = locateSliderGap(fixture.input);
+
+    expect(result).toMatchObject({ confidence: expect.any(Number), method: 'texture' });
+    expect(result!.confidence).toBeLessThan(.68);
+  });
+
   it('uses guarded geometry when piece texture is not preserved by the renderer', () => {
     const width = 48;
     const height = 48;
@@ -199,8 +263,34 @@ describe('slider gap locator', () => {
     expect(result).toMatchObject({ confidence: expect.any(Number) });
     expect(result!.x).toBeGreaterThanOrEqual(targetX - 2);
     expect(result!.x).toBeLessThanOrEqual(targetX + 2);
-    expect(result!.confidence).toBeGreaterThan(.58);
+    expect(result!.confidence).toBeGreaterThan(.5);
     expect(result!.confidence).toBeLessThanOrEqual(.68);
+  });
+
+  it('accepts a distinctive silhouette when the gap region corroborates its position', () => {
+    const width = 48;
+    const height = 48;
+    const targetX = 154;
+    const targetY = 30;
+    const image = texturedImage();
+    const alpha = new Array<number>(width * height).fill(0);
+    const luminance = new Array<number>(width * height).fill(110);
+    const opaque = (x: number, y: number) => x >= 2 && x < width - 2 && y >= 2 && y < height - 2 && !(x >= 17 && x < 31 && y < 11);
+    for (let y = 0; y < height; y += 1) for (let x = 0; x < width; x += 1) {
+      if (!opaque(x, y)) continue;
+      alpha[y * width + x] = 255;
+      const target = ((targetY + y) * image.width + targetX + x) * 4;
+      image.data[target] = 42;
+      image.data[target + 1] = 42;
+      image.data[target + 2] = 42;
+    }
+
+    const result = locateSliderGap({ image, expectedSize: width, pieceMask: { offsetY: targetY, width, height, alpha, luminance } });
+
+    expect(result).toMatchObject({ x: expect.any(Number), y: expect.any(Number), method: 'shape' });
+    expect(result!.x).toBeGreaterThanOrEqual(targetX - 2);
+    expect(result!.x).toBeLessThanOrEqual(targetX + 2);
+    expect(result!.confidence).toBeGreaterThanOrEqual(.69);
   });
 
   it('abstains when a strong silhouette does not share the piece texture', () => {

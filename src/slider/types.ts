@@ -12,7 +12,7 @@ export const SLIDER_RESULT_STATES = [
 
 export type SliderResultState = typeof SLIDER_RESULT_STATES[number];
 
-export type SliderProvider = 'geetest' | 'geetest-v4' | 'generic';
+export type SliderProvider = 'aliyun' | 'geetest' | 'geetest-v4' | 'generic';
 
 export type SliderImageSource = 'paired-background' | 'background' | 'viewport';
 export type SliderLocalizationMethod = 'reference-difference' | 'texture' | 'shape' | 'geometry' | 'edge-perimeter';

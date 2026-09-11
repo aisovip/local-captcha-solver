@@ -6,7 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
-暂无未发布变更。
+### 中文
+
+#### 新增
+
+- 拼图滑块 Beta 新增阿里云弹窗拼图布局支持，并以局部纹理细节及轮廓与区域联合校验区分相似候选区域。
+
+### English
+
+#### Added
+
+- Added Aliyun popup puzzle layout support to the puzzle-slider Beta, using local texture detail and combined silhouette/region validation to distinguish visually similar candidate regions.
 
 ## [1.3.1] - 2026-08-26
 

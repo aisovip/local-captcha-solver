@@ -392,4 +392,25 @@ test('automatically handles a supported slider after the site is explicitly enab
   await popup.locator('#app').screenshot({ path: testInfo.outputPath('captcha-helper-popup-slider-success.png') });
   await popup.close();
   await page.close();
+
+  const aliyunPage = await open('/aliyun-slider.html');
+  await waitForContent(aliyunPage);
+  await expect.poll(() => contentMessage(aliyunPage, { type: 'captcha:slider-discover' })).toMatchObject({
+    state: 'ready',
+    challenge: {
+      provider: 'aliyun',
+      pieceMask: { width: expect.any(Number), height: expect.any(Number) },
+    },
+  });
+  await expect(aliyunPage.locator('#aliyunCaptcha-result')).toHaveText('滑动成功!', { timeout: 15_000 });
+  await expect(aliyunPage.locator('[data-local-captcha-status]')).toContainText(/滑块已自动完成|Slider drag completed/);
+  await aliyunPage.screenshot({ path: testInfo.outputPath('captcha-helper-aliyun-slider-success.png'), fullPage: true });
+  await aliyunPage.close();
+
+  const aliyunShapePage = await open('/aliyun-slider.html?mode=shape');
+  await waitForContent(aliyunShapePage);
+  await expect(aliyunShapePage.locator('#aliyunCaptcha-result')).toHaveText('滑动成功!', { timeout: 15_000 });
+  await expect(aliyunShapePage.locator('[data-local-captcha-status]')).toContainText(/滑块已自动完成|Slider drag completed/);
+  await aliyunShapePage.screenshot({ path: testInfo.outputPath('captcha-helper-aliyun-shape-slider-success.png'), fullPage: true });
+  await aliyunShapePage.close();
 });

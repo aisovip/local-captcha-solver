@@ -101,6 +101,12 @@ interface SliderImageView {
   scaleY: number;
 }
 
+function imageSourcePriority(source: SliderImageSource): number {
+  if (source === 'paired-background') return 2;
+  if (source === 'background') return 1;
+  return 0;
+}
+
 function locateInView(challenge: SliderChallengeSnapshot, view: SliderImageView) {
   const expectedSize = challenge.piece === undefined ? Math.max(challenge.handle.width, challenge.handle.height) : Math.max(challenge.piece.width, challenge.piece.height);
   const pieceMask = scaledPieceMask(challenge, view.scaleX, view.scaleY);
@@ -286,7 +292,9 @@ export function createSliderSolver(adapter: SliderSolverAdapter): SliderSolver {
         };
         const attempts = (cleanView === undefined ? [visibleView] : [cleanView, visibleView]).map((view) => locateInView(before, view));
         const rankedAttempts = [...attempts].sort((left, right) => (right.location?.confidence ?? 0) - (left.location?.confidence ?? 0));
-        const acceptedAttempts = rankedAttempts.filter((attempt) => attempt.location !== undefined && attempt.location.confidence >= confidenceThreshold(attempt.location.method));
+        const acceptedAttempts = attempts
+          .filter((attempt) => attempt.location !== undefined && attempt.location.confidence >= confidenceThreshold(attempt.location.method))
+          .sort((left, right) => imageSourcePriority(right.view.source) - imageSourcePriority(left.view.source) || (right.location?.confidence ?? 0) - (left.location?.confidence ?? 0));
         const selected = acceptedAttempts[0] ?? rankedAttempts[0]!;
         const alternative = rankedAttempts.find((attempt) => attempt !== selected);
         const selectedThreshold = selected.location === undefined ? DEFAULT_MASKED_CONFIDENCE : confidenceThreshold(selected.location.method);

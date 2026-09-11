@@ -115,7 +115,7 @@ function cleanSite(value: unknown): string | undefined {
 function sanitizeContext(context: DiagnosticContext = {}): DiagnosticContext {
   const trigger = context.trigger === 'automatic' || context.trigger === 'manual' || context.trigger === 'explicit' || context.trigger === 'context' ? context.trigger : undefined;
   const match = context.match === 'unique' || context.match === 'ambiguous' || context.match === 'none' ? context.match : undefined;
-  const provider: SliderProvider | undefined = context.provider === 'geetest' || context.provider === 'geetest-v4' || context.provider === 'generic' ? context.provider : undefined;
+  const provider: SliderProvider | undefined = context.provider === 'aliyun' || context.provider === 'geetest' || context.provider === 'geetest-v4' || context.provider === 'generic' ? context.provider : undefined;
   const imageSource: SliderImageSource | undefined = context.imageSource === 'paired-background' || context.imageSource === 'background' || context.imageSource === 'viewport' ? context.imageSource : undefined;
   const localizationMethod: SliderLocalizationMethod | undefined = context.localizationMethod === 'reference-difference' || context.localizationMethod === 'texture' || context.localizationMethod === 'shape' || context.localizationMethod === 'geometry' || context.localizationMethod === 'edge-perimeter' ? context.localizationMethod : undefined;
   const phase: SliderDiagnosticPhase | undefined = context.phase === 'discovery' || context.phase === 'activation' || context.phase === 'localization' || context.phase === 'execution' || context.phase === 'outcome' ? context.phase : undefined;
