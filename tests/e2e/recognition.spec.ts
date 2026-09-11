@@ -112,7 +112,8 @@ test.beforeAll(async () => {
   profileDirectory = await mkdtemp(join(tmpdir(), `local-captcha-solver-${target}-recognition-`));
 
   context = await chromium.launchPersistentContext(profileDirectory, {
-    headless: false,
+    headless: true,
+    channel: 'chromium',
     offline: true,
     ...(target === 'edge' ? { executablePath: edgeExecutable } : {}),
     args: [

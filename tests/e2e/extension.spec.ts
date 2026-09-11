@@ -125,9 +125,6 @@ test.beforeAll(async () => {
     cwd: repositoryRoot,
     env: { ...process.env, CAPTCHA_E2E_PREGRANT: '1' },
   });
-  if (process.platform === 'linux' && process.env.DISPLAY === undefined && process.env.WAYLAND_DISPLAY === undefined) {
-    throw new Error('Headed Playwright Chromium is required for MV3 popup E2E tests. Set DISPLAY/WAYLAND_DISPLAY or run: xvfb-run -a npm run test:e2e');
-  }
   profileDirectory = await mkdtemp(join(tmpdir(), 'local-captcha-solver-e2e-'));
   let executablePath: string | undefined;
   if (e2eTarget === 'edge') {
@@ -137,7 +134,8 @@ test.beforeAll(async () => {
   }
   try {
     context = await chromium.launchPersistentContext(profileDirectory, {
-      headless: e2eTarget === 'edge' && process.env.CAPTCHA_E2E_HEADLESS === '1',
+      headless: true,
+      channel: 'chromium',
       ...(executablePath === undefined ? {} : { executablePath }),
       args: [
         `--disable-extensions-except=${extensionPath}`,
