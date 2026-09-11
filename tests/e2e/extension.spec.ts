@@ -460,3 +460,44 @@ test('keeps a site disabled in global slider mode across popup and page reloads'
   await restoredPopup.close();
   await page.close();
 });
+
+test('preserves search input until the user submits with automatic slider handling enabled', async () => {
+  const page = await open('/search.html');
+  const popup = await openActionPopup(page);
+  await popup.locator('[data-popup-tab="slider"]').click();
+  const wasEnabled = await popup.locator('[data-slider-enabled]').isChecked();
+  await popup.locator('[data-slider-enabled]').check();
+  await expect(popup.locator('[data-slider-enabled]')).toBeChecked();
+  await popup.close();
+
+  try {
+    for (let visit = 0; visit < 2; visit += 1) {
+      if (visit > 0) await page.reload();
+      await waitForContent(page);
+      const input = page.locator('.nav-search-input');
+      await input.click();
+      await expect(page.locator('.search-panel')).toBeVisible();
+      await page.waitForTimeout(6_000);
+
+      expect(await submitCount(page)).toBe(0);
+      await expect(page).toHaveURL(`${server.origin}/search.html`);
+      await expect(input).toHaveValue('');
+      await expect(input).toBeFocused();
+      await expect(page.locator('[data-local-captcha-status]')).toHaveCount(0);
+      await expect(contentMessage(page, { type: 'captcha:slider-discover' })).resolves.toEqual({ state: 'not-found' });
+    }
+
+    await page.locator('.nav-search-input').fill('MiniMax M3');
+    await page.locator('.nav-search-btn').click();
+    expect(await submitCount(page)).toBe(1);
+    await expect(page).toHaveURL(`${server.origin}/search.html?keyword=MiniMax+M3`);
+  } finally {
+    if (!wasEnabled) {
+      const restorePopup = await openActionPopup(page);
+      await restorePopup.locator('[data-popup-tab="slider"]').click();
+      await restorePopup.locator('[data-slider-enabled]').uncheck();
+      await restorePopup.close();
+    }
+    await page.close();
+  }
+});

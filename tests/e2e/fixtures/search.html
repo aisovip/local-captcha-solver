@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<title>搜索框交互</title>
+<style>
+  body { margin: 0; font: 16px sans-serif; }
+  .bili-header__bar { height: 64px; display: flex; justify-content: center; }
+  .center-search__bar { width: 328px; margin-top: 14px; }
+  #nav-searchform { display: flex; align-items: center; gap: 8px; height: 40px; background: #eee; }
+  .nav-search-input { min-width: 0; flex: 1; margin-left: 8px; height: 28px; }
+  .nav-search-btn { width: 32px; height: 32px; margin-right: 8px; line-height: 32px; cursor: pointer; }
+  .search-panel { padding: 16px; background: #f5f5f5; }
+</style>
+<header class="bili-header__bar">
+  <div class="center-search__bar">
+    <form id="nav-searchform">
+      <input class="nav-search-input" name="keyword" aria-label="搜索" placeholder="MiniMax M3" autocomplete="off">
+      <div class="nav-search-btn" role="button" aria-label="搜索">⌕</div>
+    </form>
+    <div class="search-panel" hidden>
+      <p>搜索历史</p>
+      <p>Dragon Q8B</p>
+      <p>拖动验证教程</p>
+    </div>
+  </div>
+</header>
+<script>
+  window.__submitCount = 0;
+  const form = document.querySelector('form');
+  const input = document.querySelector('input');
+  const panel = document.querySelector('.search-panel');
+  input.addEventListener('focus', () => { panel.hidden = false; });
+  document.querySelector('.nav-search-btn').addEventListener('click', () => form.requestSubmit());
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    window.__submitCount += 1;
+    const query = new URLSearchParams({ keyword: input.value || input.placeholder });
+    history.pushState(null, '', `?${query}`);
+  });
+</script>
+</html>

@@ -13,6 +13,7 @@ const pages = new Map([
   ['/ambiguous.html', new URL('./ambiguous.html', import.meta.url)],
   ['/slider.html', new URL('./slider.html', import.meta.url)],
   ['/aliyun-slider.html', new URL('./aliyun-slider.html', import.meta.url)],
+  ['/search.html', new URL('./search.html', import.meta.url)],
 ]);
 
 const images = new Map([

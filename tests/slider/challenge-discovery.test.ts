@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { discoverSliderChallenge, observeSliderOutcome } from '../../src/slider/challenge-discovery';
+import { discoverSliderChallenge, observeSliderOutcome, visibleSliderInteractionTarget } from '../../src/slider/challenge-discovery';
 
 describe('slider challenge outcome', () => {
   it('reports a removed challenge as absent so the solver can confirm it across observations', async () => {
@@ -289,6 +289,35 @@ describe('slider challenge outcome', () => {
     button.getBoundingClientRect = () => ({ x: 20, y: 10, left: 20, top: 10, right: 170, bottom: 50, width: 150, height: 40, toJSON: () => ({}) });
 
     await expect(discoverSliderChallenge()).resolves.toEqual({ state: 'not-found' });
+  });
+
+  it('requires complete activation words in ordinary button labels', async () => {
+    document.body.innerHTML = '<button>Dragon Q8B</button>';
+    const button = document.querySelector('button')!;
+    button.getBoundingClientRect = () => ({ x: 20, y: 10, left: 20, top: 10, right: 200, bottom: 50, width: 180, height: 40, toJSON: () => ({}) });
+
+    await expect(discoverSliderChallenge()).resolves.toEqual({ state: 'not-found' });
+    expect(visibleSliderInteractionTarget()).toBeUndefined();
+  });
+
+  it.each(['Dragon Q8B', '拖动验证教程'])('keeps search controls available when history contains %s', async (history) => {
+    document.body.innerHTML = `<header class="bili-header__bar"><div class="center-search__bar"><form id="nav-searchform"><input class="nav-search-input"><div class="nav-search-btn"></div></form><div class="search-panel">${history}</div></div></header>`;
+    const header = document.querySelector('header')!;
+    const search = document.querySelector('.center-search__bar')!;
+    const form = document.querySelector('form')!;
+    const button = document.querySelector('.nav-search-btn')!;
+    const rects = new Map<Element, { x: number; y: number; width: number; height: number }>([
+      [header, { x: 0, y: 0, width: 1380, height: 64 }],
+      [search, { x: 528, y: 14, width: 328, height: 320 }],
+      [form, { x: 528, y: 14, width: 328, height: 40 }],
+      [button, { x: 816, y: 18, width: 32, height: 32 }],
+    ]);
+    for (const [element, rect] of rects) element.getBoundingClientRect = () => ({
+      ...rect, left: rect.x, top: rect.y, right: rect.x + rect.width, bottom: rect.y + rect.height, toJSON: () => ({}),
+    });
+
+    await expect(discoverSliderChallenge()).resolves.toEqual({ state: 'not-found' });
+    expect(visibleSliderInteractionTarget()).toBeUndefined();
   });
 
   it('waits for a collapsed slider control to leave its loading state', async () => {

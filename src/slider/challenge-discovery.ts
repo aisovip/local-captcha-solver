@@ -117,7 +117,7 @@ const HANDLE_CONTROL_PATTERN = /(^|[-_\s])(handle|thumb|button|btn)([-_\s]|$)/i;
 const NON_HANDLE_LAYER_PATTERN = /(^|[-_\s])(indicator|progress|fill|track|rail)([-_\s]|$)/i;
 const TRACK_SEMANTIC_PATTERN = /(^|[-_\s])(track|rail|control|bar|slider|sliding|slide|drag)([-_\s]|$)/i;
 const PIECE_SEMANTIC_PATTERN = /(^|[-_\s])(piece|jigsaw|slice|puzzle)([-_\s]|$)/i;
-const ACTIVATION_ACTION_PATTERN = /(verify|verification|slide|drag|swipe|radar|验证|校验|滑动|拖动)/i;
+const ACTIVATION_ACTION_PATTERN = /(^|[^a-z0-9])(verify|verification|slide|drag|swipe|radar)(?=$|[^a-z0-9])|验证|校验|滑动|拖动/i;
 const INACTIVE_CONTROL_PATTERN = /(^|[-_\s])(success|passed|complete|error|fail|disabled|loading|waiting|wait|verifying|freeze)([-_\s]|$)|成功|完成|失败|禁用/i;
 
 function rectFor(element: Element): SliderRect | undefined {
@@ -435,19 +435,21 @@ async function snapshotForHandle(handle: Element): Promise<SliderChallengeSnapsh
   };
 }
 
+function activationHinted(element: Element): boolean {
+  if (element.querySelector('input:not([type="hidden"]), textarea, select, [contenteditable]:not([contenteditable="false"])') !== null) return false;
+  const signal = `${semanticValue(element)} ${element.getAttribute('title') ?? ''} ${element.textContent ?? ''}`;
+  return element.hasAttribute('data-slider-activator') || ACTIVATION_ACTION_PATTERN.test(signal);
+}
+
 function activatorFor(element: Element): SliderActivatorSnapshot | undefined {
   const rect = rectFor(element);
-  if (rect === undefined || rect.width < 120 || rect.height < 30 || rect.height > 100) return undefined;
-  const semanticSignal = `${element.id} ${element.className}`;
-  const contentSignal = `${element.getAttribute('aria-label') ?? ''} ${element.getAttribute('title') ?? ''} ${element.textContent ?? ''}`;
+  if (rect === undefined || rect.width < 120 || rect.height < 30 || rect.height > 100 || !activationHinted(element)) return undefined;
   let stateSignal = '';
   let stateElement: Element | null = element;
   for (let depth = 0; depth < 5 && stateElement !== null; depth += 1, stateElement = stateElement.parentElement) {
     stateSignal += ` ${stateElement.id} ${stateElement.className} ${stateElement.getAttribute('aria-disabled') ?? ''} ${stateElement.getAttribute('aria-busy') ?? ''}`;
   }
   if (INACTIVE_CONTROL_PATTERN.test(stateSignal)) return undefined;
-  if (!element.hasAttribute('data-slider-activator') && !ACTIVATION_ACTION_PATTERN.test(contentSignal) &&
-    !ACTIVATION_ACTION_PATTERN.test(semanticSignal)) return undefined;
   return { provider: providerFor(element), rect };
 }
 
@@ -457,9 +459,8 @@ function activatorForHandle(handle: Element): SliderActivatorSnapshot | undefine
   let current = handle.parentElement;
   for (let depth = 0; depth < 5 && current !== null; depth += 1, current = current.parentElement) {
     const rect = rectFor(current);
-    const signal = `${semanticValue(current)} ${current.textContent ?? ''}`;
     if (rect !== undefined && trackHinted(current) && rect.width >= Math.max(120, handleRect.width * 3) && rect.height <= Math.max(100, handleRect.height * 2.5) &&
-      containsRect(rect, handleRect, 8) && ACTIVATION_ACTION_PATTERN.test(signal)) {
+      containsRect(rect, handleRect, 8) && activationHinted(current)) {
       return { provider: providerFor(current), rect: handleRect };
     }
   }
