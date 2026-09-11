@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+暂无未发布变更。
+
+## [1.3.2] - 2026-09-11
+
 ### 中文
 
 #### 新增
@@ -216,7 +220,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Frozen 201-image benchmark at 98.01% whole-string/fill accuracy and 100% arithmetic-answer accuracy.
 - Documented data provenance, licenses, split-group isolation, Paddle/ONNX parity, and offline Chrome/Edge verification.
 
-[Unreleased]: https://github.com/hongshuo-wang/local-captcha-solver/compare/v1.3.1...HEAD
+[Unreleased]: https://github.com/hongshuo-wang/local-captcha-solver/compare/v1.3.2...HEAD
+[1.3.2]: https://github.com/hongshuo-wang/local-captcha-solver/compare/v1.3.1...v1.3.2
 [1.3.1]: https://github.com/hongshuo-wang/local-captcha-solver/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/hongshuo-wang/local-captcha-solver/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/hongshuo-wang/local-captcha-solver/compare/v1.1.0...v1.2.0

@@ -46,7 +46,7 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       - name: Run built-extension tests
-        run: xvfb-run -a npm run test:e2e:extension
+        run: npm run test:e2e:extension
 
       - name: Build Chrome release ZIP
         run: npm run zip:chrome
