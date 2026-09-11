@@ -410,7 +410,7 @@ describe('content runtime messages', () => {
     expect(statusText()).toContain('滑块已自动完成');
     pageFocused = false;
   });
-  it('does not let a disabled slider run restore stale status after it finishes', async () => {
+  it.each(['selected', 'all'] as const)('stops a disabled slider and ignores its pending result in %s mode', async (sliderAccessMode) => {
     vi.useFakeTimers();
     vi.stubGlobal('defineContentScript', (value: unknown) => value);
     vi.spyOn(document, 'hasFocus').mockImplementation(() => true);
@@ -421,24 +421,29 @@ describe('content runtime messages', () => {
     let release!: (result: { state: 'success' }) => void;
     const pending = new Promise<{ state: 'success' }>((resolve) => { release = resolve; });
     const sendMessage = vi.fn((message: { type: string }) => message.type === 'captcha:slider-auto-run' ? pending : Promise.resolve(undefined));
+    const settings = { ...DEFAULT_SETTINGS, sliderAccessMode, sliderEnabledHosts: [location.hostname] };
     let updateSettings!: (settings: unknown) => void;
     const { createRuntimeContent } = await import('../../entrypoints/content');
     createRuntimeContent({
       sendMessage,
       onMessage: { addListener: listener },
       settings: {
-        read: async () => ({ ...DEFAULT_SETTINGS, sliderEnabledHosts: [location.hostname] }),
+        read: async () => settings,
         subscribe: (subscriber) => { updateSettings = subscriber; return () => undefined; },
       },
     });
-    updateSettings({ ...DEFAULT_SETTINGS, sliderEnabledHosts: [location.hostname] });
+    updateSettings(settings);
     await vi.advanceTimersByTimeAsync(500);
     await Promise.resolve();
     expect(sendMessage.mock.calls.filter(([message]) => message.type === 'captcha:slider-auto-run')).toHaveLength(1);
-    updateSettings({ ...DEFAULT_SETTINGS, sliderEnabledHosts: [] });
+    updateSettings({ ...settings, sliderEnabledHosts: [], sliderDisabledHosts: [location.hostname] });
     release({ state: 'success' });
     await pending;
     await Promise.resolve();
+    activator.style.left = '50px';
+    window.dispatchEvent(new Event('focus'));
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(sendMessage.mock.calls.filter(([message]) => message.type === 'captcha:slider-auto-run')).toHaveLength(1);
     expect(statusText()).not.toContain('滑块已自动完成');
   });
   it('does not mark a challenge refreshed during an older run as already attempted', async () => {

@@ -173,7 +173,7 @@ describe('createSettingsStore', () => {
 
   it('migrates existing settings without enabling slider automation on any site', async () => {
     const store = createSettingsStore(adapterWith({ ...defaults, version: 4, sliderEnabledHosts: undefined }));
-    await expect(store.read()).resolves.toMatchObject({ version: 7, sliderEnabledHosts: [], sliderAccessMode: 'selected', sliderOnboardingChoice: undefined, lastSeenUpgradeGuide: null });
+    await expect(store.read()).resolves.toMatchObject({ version: 8, sliderEnabledHosts: [], sliderDisabledHosts: [], sliderAccessMode: 'selected', sliderOnboardingChoice: undefined, lastSeenUpgradeGuide: null });
   });
 
   it('stores slider automation as an exact-host permission independent of OCR access', async () => {
@@ -195,14 +195,73 @@ describe('createSettingsStore', () => {
     await expect(store.isSliderEnabled('https://any.example.test/captcha')).resolves.toBe(false);
   });
 
+  it.each([{ sliderEnabledHosts: [] }, { sliderEnabledHosts: ['login.example.test'] }])('keeps an exact site disabled in global slider mode with %j', async ({ sliderEnabledHosts }) => {
+    const adapter = adapterWith({ ...defaults, accessMode: 'all', sliderAccessMode: 'all', sliderEnabledHosts });
+    const store = createSettingsStore(adapter);
+    await store.setSliderEnabled('Login.Example.test', false);
+    await store.setSliderEnabled('login.example.test', false);
+
+    const restored = createSettingsStore(adapter);
+    await expect(restored.isSliderEnabled('https://login.example.test/captcha')).resolves.toBe(false);
+    await expect(restored.isSliderEnabled('http://login.example.test/another-page')).resolves.toBe(false);
+    await expect(restored.isSliderEnabled('https://child.login.example.test/captcha')).resolves.toBe(true);
+    await expect(restored.isSliderEnabled('https://other.example.test/captcha')).resolves.toBe(true);
+    await expect(restored.isEnabled('https://login.example.test/captcha')).resolves.toBe(true);
+    await expect(restored.read()).resolves.toMatchObject({ sliderDisabledHosts: ['login.example.test'], sliderEnabledHosts: [] });
+
+    await restored.setSliderAccessMode('selected');
+    await restored.setSliderAccessMode('all');
+    await expect(restored.isSliderEnabled('https://login.example.test/')).resolves.toBe(false);
+    await restored.setSliderEnabled('login.example.test', true);
+    await expect(createSettingsStore(adapter).isSliderEnabled('https://login.example.test/')).resolves.toBe(true);
+    await expect(restored.read()).resolves.toMatchObject({ sliderDisabledHosts: [] });
+  });
+
   it('keeps slider onboarding choice empty until the user explicitly chooses a scope', async () => {
     const store = createSettingsStore(adapterWith({ ...defaults, version: 6, sliderAccessMode: 'all' }));
-    await expect(store.read()).resolves.toMatchObject({ version: 7, sliderAccessMode: 'all', sliderOnboardingChoice: undefined, lastSeenUpgradeGuide: null });
+    await expect(store.read()).resolves.toMatchObject({ version: 8, sliderAccessMode: 'all', sliderOnboardingChoice: undefined, lastSeenUpgradeGuide: null });
     await store.setSliderOnboardingChoice('selected');
     await store.setLastSeenUpgradeGuide('1.2.0');
     await expect(store.read()).resolves.toMatchObject({ sliderOnboardingChoice: 'selected', lastSeenUpgradeGuide: '1.2.0' });
     await store.setSliderOnboardingChoice(undefined);
     await store.setLastSeenUpgradeGuide(null);
     await expect(store.read()).resolves.toMatchObject({ sliderOnboardingChoice: undefined, lastSeenUpgradeGuide: null });
+  });
+
+  it('migrates version 7 settings with an empty slider exclusion list', async () => {
+    const settings = {
+      ...defaults,
+      sliderAccessMode: 'all' as const,
+      sliderEnabledHosts: ['login.example.test'],
+      sliderOnboardingChoice: 'all' as const,
+      lastSeenUpgradeGuide: '1.3.0',
+      autoFill: false,
+    };
+    const store = createSettingsStore(adapterWith({ ...settings, version: 7, sliderDisabledHosts: undefined }));
+    await expect(store.read()).resolves.toEqual(settings);
+    await store.setSliderEnabled('login.example.test', false);
+    await expect(store.read()).resolves.toEqual({ ...settings, sliderEnabledHosts: [], sliderDisabledHosts: ['login.example.test'] });
+  });
+
+  it.each(['all', 'selected'] as const)('gives normalized slider exclusions priority in %s mode independently of OCR', async (sliderAccessMode) => {
+    const store = createSettingsStore(adapterWith({
+      ...defaults,
+      accessMode: 'all',
+      disabledHosts: ['other.example.test'],
+      sliderAccessMode,
+      sliderEnabledHosts: ['login.example.test', 'other.example.test'],
+      sliderDisabledHosts: ['Login.Example.test', 'login.example.test'],
+    }));
+    await expect(store.read()).resolves.toMatchObject({ sliderDisabledHosts: ['login.example.test'] });
+    await expect(store.isSliderEnabled('https://login.example.test/')).resolves.toBe(false);
+    await expect(store.isSliderEnabled('https://other.example.test/')).resolves.toBe(true);
+    await expect(store.isEnabled('https://login.example.test/')).resolves.toBe(true);
+    await expect(store.isEnabled('https://other.example.test/')).resolves.toBe(false);
+    await expect(store.isSliderEnabled('chrome://extensions/')).resolves.toBe(false);
+  });
+
+  it('disables automatic slider handling when stored exclusions are malformed', async () => {
+    const store = createSettingsStore(adapterWith({ ...defaults, sliderAccessMode: 'all', sliderDisabledHosts: 'login.example.test' }));
+    await expect(store.isSliderEnabled('https://login.example.test/')).resolves.toBe(false);
   });
 });

@@ -76,6 +76,8 @@ Puzzle-slider controls are available in Chrome and Edge. Firefox provides the st
 
 The extension monitors enabled sites for a unique visible slider, waits for the page and user input to settle, verifies the challenge again before dragging, and stops instead of guessing when the geometry or result is uncertain. Manual handling from the popup is available even when automatic slider handling is off, subject to site access and debugger permission.
 
+In `All sites` mode, turn off `Site takeover` in the popup to disable automatic slider handling for the current site. This choice persists across page reloads and browser restarts. Turn it back on in the popup or restore the site under Settings -> Puzzle sliders -> Disabled sites. The setting applies to the exact hostname and is stored separately from static CAPTCHA settings.
+
 ### Upgrading to 1.2.0
 
 Users upgrading from an earlier version see one standalone upgrade tab for the new slider feature. Configure the slider site scope, review the permission summary, and open the GeeTest demo in a separate tab. Existing static OCR settings continue unchanged.

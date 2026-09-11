@@ -165,9 +165,9 @@ function siteList(sites: readonly SelectedSiteAccess[], t: Translator): string {
   return `<ul class="site-list">${sites.map(({ rule, granted }) => `<li><div><strong>${rule.includeSubdomains ? `*.${rule.hostname}` : rule.hostname}</strong><small data-permission="${granted ? 'granted' : 'missing'}">${granted ? t('sitePermissionGranted') : t('sitePermissionMissing')} · ${rule.includeSubdomains ? t('includesSubdomains') : t('exactHostname')}</small></div><button type="button" class="icon-command" data-remove-site="${rule.hostname}" data-subdomains="${rule.includeSubdomains}" title="${t('remove')}" aria-label="${t('remove')} ${rule.hostname}">×</button></li>`).join('')}</ul>`;
 }
 
-function disabledList(hosts: readonly string[], t: Translator): string {
+function disabledList(hosts: readonly string[], t: Translator, scope: 'site' | 'slider' = 'site'): string {
   if (hosts.length === 0) return `<p class="empty-state">${t('noDisabledSites')}</p>`;
-  return `<ul class="site-list">${hosts.map((host) => `<li><strong>${host}</strong><button type="button" class="text-button" data-restore-site="${host}">${t('restore')}</button></li>`).join('')}</ul>`;
+  return `<ul class="site-list">${hosts.map((host) => `<li><strong>${host}</strong><button type="button" class="text-button" data-restore-${scope}="${host}">${t('restore')}</button></li>`).join('')}</ul>`;
 }
 
 function staticMarkup(settings: CaptchaSettings, globalGranted: boolean, selectedAccess: readonly SelectedSiteAccess[], t: Translator): string {
@@ -236,8 +236,9 @@ function sliderMarkup(settings: CaptchaSettings, globalGranted: boolean, debugge
       <p class="inline-status" data-slider-settings-status role="status"></p>
       <p class="permission-note"><i class="status-dot" data-granted="${settings.sliderAccessMode === 'all' && globalGranted}"></i>${settings.sliderAccessMode === 'all' ? (globalGranted ? t('sliderGlobalGranted') : t('sliderGlobalPermissionMissing')) : t('sliderSelectedDescription')}</p>
       ${settings.sliderAccessMode === 'selected' ? `<form class="site-form" data-slider-site-form><label><span>${t('addSliderSite')}</span><input name="hostname" type="text" inputmode="url" autocomplete="off" placeholder="${t('hostnamePlaceholder')}" /></label><button type="submit" class="primary-button">${t('add')}</button></form>` : ''}
-      ${sliderSites}
+      ${settings.sliderAccessMode === 'selected' ? sliderSites : ''}
     </section>
+    <section class="content-section list-section" aria-labelledby="slider-disabled-title"><div class="section-heading compact"><h2 id="slider-disabled-title">${t('disabledSites')}</h2><span class="count">${settings.sliderDisabledHosts.length}</span></div>${disabledList(settings.sliderDisabledHosts, t, 'slider')}</section>
     <section class="content-section demo-launch"><div><span class="demo-brand">G</span><div><h2>GeeTest</h2><p>2captcha.com/demo/geetest</p></div></div><div><button type="button" class="secondary-button" data-open-geetest>${t('openGeeTestDemo')}</button><button type="button" class="text-button" data-open-guide>${t('reopenGuide')}</button></div></section>`;
 }
 
@@ -330,6 +331,14 @@ export async function startOptions(
     await show('static');
   };
 
+  const enableSliderSite = async (hostname: string): Promise<void> => {
+    const granted = await extension.permissions.request({ origins: [`http://${hostname}/*`, `https://${hostname}/*`] });
+    if (!granted) { setInlineStatus('[data-slider-settings-status]', t('permissionRequestFailed'), true); return; }
+    await settingsStore.setSliderEnabled(hostname, true);
+    await reconcile();
+    await show('slider');
+  };
+
   const wire = (view: ViewName): void => {
     root.querySelectorAll<HTMLElement>('[data-nav]').forEach((control) => control.addEventListener('click', (event) => {
       event.preventDefault();
@@ -362,6 +371,9 @@ export async function startOptions(
     root.querySelectorAll<HTMLButtonElement>('[data-remove-slider]').forEach((button) => button.addEventListener('click', () => {
       void settingsStore.setSliderEnabled(button.dataset.removeSlider!, false).then(() => show(view));
     }));
+    root.querySelectorAll<HTMLButtonElement>('[data-restore-slider]').forEach((button) => button.addEventListener('click', () => {
+      void enableSliderSite(button.dataset.restoreSlider!);
+    }));
     root.querySelectorAll<HTMLButtonElement>('[data-slider-mode]').forEach((button) => button.addEventListener('click', () => {
       void (async () => {
         const mode = button.dataset.sliderMode as 'all' | 'selected';
@@ -384,11 +396,7 @@ export async function startOptions(
       void (async () => {
         let hostname: string;
         try { hostname = parseHostname(input.value); } catch { setInlineStatus('[data-slider-settings-status]', t('invalidHostname'), true); return; }
-        const granted = await extension.permissions.request({ origins: [`http://${hostname}/*`, `https://${hostname}/*`] });
-        if (!granted) { setInlineStatus('[data-slider-settings-status]', t('permissionRequestFailed'), true); return; }
-        await settingsStore.setSliderEnabled(hostname, true);
-        await reconcile();
-        await show('slider');
+        await enableSliderSite(hostname);
       })();
     });
     root.querySelector<HTMLSelectElement>('#interface-locale')?.addEventListener('change', (event) => {

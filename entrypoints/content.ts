@@ -8,7 +8,7 @@ import { copyText } from '../src/content/clipboard';
 import { AUTOMATIC_CANDIDATE_THRESHOLD, scoreCaptchaCandidate } from '../src/core/candidate-scorer';
 import type { OcrResult, RecognitionMode, WorkflowResult } from '../src/core/types';
 import { createRuntimeMessageListener, sendRuntimeMessage, type RuntimeMessageListener } from '../src/platform/runtime-messaging';
-import { isInterfaceLocale, isRecognitionShortcut, recognitionModeFromSettings, SETTINGS_STORAGE_KEY, type InterfaceLocale, type RecognitionShortcut } from '../src/platform/settings-store';
+import { isInterfaceLocale, isRecognitionShortcut, recognitionModeFromSettings, sliderEnabledFromSettings, SETTINGS_STORAGE_KEY, type InterfaceLocale, type RecognitionShortcut } from '../src/platform/settings-store';
 import { resolveUiLocale, type UiLocale } from '../src/platform/i18n';
 import { discoverSliderChallenge, observeSliderOutcome, sliderDiscoveryKey, visibleSliderInteractionTarget } from '../src/slider/challenge-discovery';
 import { SLIDER_RESULT_STATES, type SliderResultState, type SliderRunResult } from '../src/slider/types';
@@ -35,14 +35,6 @@ function localeFromSettings(value: unknown, browserLanguage: string): UiLocale {
     ? (value as { interfaceLocale: InterfaceLocale }).interfaceLocale
     : 'system';
   return resolveUiLocale(preference, browserLanguage);
-}
-function sliderEnabledFromSettings(value: unknown): boolean {
-  if (typeof value !== 'object' || value === null) return false;
-  try {
-    const hostname = new URL(location.href).hostname.toLowerCase();
-    const settings = value as { sliderAccessMode?: unknown; sliderEnabledHosts?: unknown };
-    return settings.sliderAccessMode === 'all' || (Array.isArray(settings.sliderEnabledHosts) && settings.sliderEnabledHosts.includes(hostname));
-  } catch { return false; }
 }
 const AUTOMATIC_MODES: readonly RecognitionMode[] = ['digits', 'letters', 'alphanumeric', 'arithmetic'];
 const SLIDER_USER_INPUT_COOLDOWN_MS = 1200;
@@ -273,7 +265,7 @@ export function createRuntimeContent(runtime: Runtime) {
       uiLocale = localeFromSettings(settings, runtime.uiLanguage ?? 'zh-CN');
       text = CONTENT_TEXT[uiLocale];
       setStatusUiLocale(uiLocale);
-      sliderAutomaticEnabled = sliderEnabledFromSettings(settings);
+      sliderAutomaticEnabled = sliderEnabledFromSettings(settings, location.href);
       if (sliderAutomaticEnabled) startSliderObserver();
     }
   }).catch(() => undefined);
@@ -285,7 +277,7 @@ export function createRuntimeContent(runtime: Runtime) {
     uiLocale = localeFromSettings(settings, runtime.uiLanguage ?? 'zh-CN');
     text = CONTENT_TEXT[uiLocale];
     setStatusUiLocale(uiLocale);
-    const nextSliderEnabled = sliderEnabledFromSettings(settings);
+    const nextSliderEnabled = sliderEnabledFromSettings(settings, location.href);
     if (nextSliderEnabled !== sliderAutomaticEnabled) sliderGeneration += 1;
     sliderAutomaticEnabled = nextSliderEnabled;
     if (sliderAutomaticEnabled) startSliderObserver();

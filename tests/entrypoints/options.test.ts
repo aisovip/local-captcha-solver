@@ -261,4 +261,25 @@ describe('options entrypoint', () => {
     expect(app.values.get(SETTINGS_STORAGE_KEY)).toMatchObject({ onboardingComplete: true });
     root.remove();
   });
+
+  it.each(['all', 'selected'] as const)('restores a disabled slider site from %s mode settings', async (sliderAccessMode) => {
+    const app = harness();
+    app.values.set(SETTINGS_STORAGE_KEY, { ...DEFAULT_SETTINGS, sliderAccessMode, sliderDisabledHosts: ['login.example.test'] });
+    location.hash = 'slider';
+    const root = document.createElement('div');
+    document.body.append(root);
+    await startOptions(root, app.extension);
+    expect(root.querySelector('#slider-disabled-title')?.textContent).toBe('已禁用网站');
+    (root.querySelector('[data-restore-slider="login.example.test"]') as HTMLButtonElement).click();
+    await vi.waitFor(() => expect(app.values.get(SETTINGS_STORAGE_KEY)).toMatchObject({
+      accessMode: 'selected',
+      sliderAccessMode,
+      sliderDisabledHosts: [],
+      sliderEnabledHosts: ['login.example.test'],
+    }));
+    expect(app.request).toHaveBeenCalledWith({ origins: ['http://login.example.test/*', 'https://login.example.test/*'] });
+    await vi.waitFor(() => expect(root.querySelector('[data-restore-slider]')).toBeNull());
+    root.remove();
+    location.hash = '';
+  });
 });

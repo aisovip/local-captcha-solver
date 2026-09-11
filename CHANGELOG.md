@@ -12,11 +12,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - 拼图滑块 Beta 新增阿里云弹窗拼图布局支持，并以局部纹理细节及轮廓与区域联合校验区分相似候选区域。
 
+#### 修复
+
+- “所有网站”滑块模式支持持久停用单个网站，弹窗与页面检测共同遵守停用设置；可在滑块设置的已禁用网站列表中恢复（#14）。
+
 ### English
 
 #### Added
 
 - Added Aliyun popup puzzle layout support to the puzzle-slider Beta, using local texture detail and combined silhouette/region validation to distinguish visually similar candidate regions.
+
+#### Fixed
+
+- Persist per-site slider exclusions in all-sites mode and apply them to both the popup and page detection. Excluded sites can be restored from Slider settings (#14).
 
 ## [1.3.1] - 2026-08-26
 

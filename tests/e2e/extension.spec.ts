@@ -412,3 +412,51 @@ test('automatically handles a supported slider after the site is explicitly enab
   await aliyunShapePage.screenshot({ path: testInfo.outputPath('captcha-helper-aliyun-shape-slider-success.png'), fullPage: true });
   await aliyunShapePage.close();
 });
+
+test('keeps a site disabled in global slider mode across popup and page reloads', async () => {
+  const options = await openOptionsPage();
+  await options.locator('[data-nav="slider"]').click();
+  await options.locator('[data-slider-mode="all"]').click();
+  await expect(options.locator('[data-slider-mode="all"]')).toHaveAttribute('aria-pressed', 'true');
+  await options.close();
+
+  const page = await open('/slider.html');
+  await waitForContent(page);
+  await expect(page.locator('#status')).toHaveText('验证成功', { timeout: 15_000 });
+  const popup = await openActionPopup(page);
+  await popup.locator('[data-popup-tab="slider"]').click();
+  await expect(popup.locator('[data-slider-enabled]')).toBeChecked();
+  await popup.locator('[data-slider-enabled]').click();
+  await expect(popup.locator('[data-slider-enabled]')).not.toBeChecked();
+  await popup.waitForTimeout(1_200);
+  await expect(popup.locator('[data-slider-enabled]')).not.toBeChecked();
+  await expect(popup.locator('[data-slider-state-title]')).toHaveText(/未接管此网站|This site is not taken over/);
+  await popup.reload();
+  await popup.locator('[data-popup-tab="slider"]').click();
+  await expect(popup.locator('[data-slider-enabled]')).not.toBeChecked();
+  await popup.close();
+
+  await page.reload();
+  await waitForContent(page);
+  await page.locator('#reset').click();
+  await page.waitForTimeout(2_000);
+  await expect(page.locator('#status')).toBeEmpty();
+  await expect(page.locator('#handle')).toHaveCSS('left', '0px');
+  await expect(page.locator('[data-local-captcha-status]')).toHaveCount(0);
+
+  const disabledOptions = await openOptionsPage();
+  await disabledOptions.locator('[data-nav="slider"]').click();
+  await expect(disabledOptions.locator('[data-slider-mode="all"]')).toHaveAttribute('aria-pressed', 'true');
+  await expect(disabledOptions.locator('[data-restore-slider="captcha.e2e.test"]')).toBeVisible();
+  await disabledOptions.close();
+
+  const restoredPopup = await openActionPopup(page);
+  await restoredPopup.locator('[data-popup-tab="slider"]').click();
+  await expect(restoredPopup.locator('[data-slider-enabled]')).not.toBeChecked();
+  await restoredPopup.locator('[data-slider-enabled]').click();
+  await expect(restoredPopup.locator('[data-slider-enabled]')).toBeChecked();
+  await page.bringToFront();
+  await expect(page.locator('#status')).toHaveText('验证成功', { timeout: 15_000 });
+  await restoredPopup.close();
+  await page.close();
+});
