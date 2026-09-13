@@ -1,6 +1,7 @@
 import { createInferenceHost } from '../src/background/inference-host';
 import type { InferenceBrowser, InferenceHost } from '../src/background/inference-host';
-import { createImageFetcher } from '../src/background/image-fetch';
+import { createImageCapture, type ImageCaptureAdapter } from '../src/background/image-capture';
+import { createImageAccess } from '../src/background/image-access';
 import { createSettingsStore } from '../src/platform/settings-store';
 import { createExtensionBrowserAdapter } from '../src/background/extension-browser';
 import { createContentRegistration } from '../src/background/content-registration';
@@ -36,7 +37,12 @@ interface BackgroundBrowser {
     query(details: { url?: readonly string[]; active?: boolean; currentWindow?: boolean }): Promise<readonly { id?: number; url?: string; windowId?: number }[]>;
     sendMessage(tabId: number, message: unknown, options?: { frameId: number }): Promise<unknown>;
     create(details: { url: string }): Promise<unknown>;
+    get(tabId: number): Promise<{ id?: number; url?: string }>;
+    captureVisibleTab: ImageCaptureAdapter['tabs']['captureVisibleTab'];
+    onActivated: ImageCaptureAdapter['tabs']['onActivated'];
+    onUpdated: ImageCaptureAdapter['tabs']['onUpdated'];
   };
+  windows: { create(details: { url: string; type: 'popup'; width: number; height: number }): Promise<unknown> };
   debugger: {
     attach(target: { tabId: number }, version: string): Promise<void>;
     detach(target: { tabId: number }): Promise<void>;
@@ -113,7 +119,19 @@ export default defineBackground(() => {
   });
   const runtimeApp = createBackgroundRuntime({
     permissions: { contains: extension.permissions.contains.bind(extension.permissions) },
-    imageFetcher: createImageFetcher({ permissions: { contains: extension.permissions.contains.bind(extension.permissions) }, fetch: globalThis.fetch.bind(globalThis) }),
+    imageCapture: createImageCapture({ tabs: {
+      query: (details) => browser.tabs.query(details),
+      captureVisibleTab: (windowId, options) => extension.tabs.captureVisibleTab(windowId, options),
+      onActivated: extension.tabs.onActivated,
+      onUpdated: extension.tabs.onUpdated,
+    } }),
+    imageAccess: createImageAccess({
+      permissions: extension.permissions,
+      settings,
+      reconcile: registration.reconcile,
+      tabs: extension.tabs,
+      openDialog: (tabId) => extension.windows.create({ url: `${runtime.getURL('/image-access.html')}?tabId=${tabId}`, type: 'popup', width: 480, height: 700 }),
+    }),
     inferenceHost: host,
     modelStatus,
     siteState: { isEnabled: settings.isEnabled, enablePage: registration.enablePage, disablePage: registration.disablePage, reconcile: registration.reconcile },

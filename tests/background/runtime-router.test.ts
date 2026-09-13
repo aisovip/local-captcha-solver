@@ -1,11 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import type { ImageCaptureResult } from '../../src/core/image-capture';
 import { createRuntimeRouter } from '../../src/background/runtime-router';
 import { createModelStatusStore } from '../../src/background/model-status';
 import { DEFAULT_SETTINGS } from '../../src/platform/settings-store';
 
 function harness(options: { pagePermission?: boolean; stateEnabled?: boolean } = {}) {
-  const fetch = vi.fn(async () => ({ state: 'ready' as const, bytes: new Uint8Array([1]), mimeType: 'image/png' }));
+  const capture = vi.fn(async (): Promise<ImageCaptureResult> => ({ state: 'ready' as const, dataUrl: 'data:image/png;base64,AQ==' }));
   const recognize = vi.fn(async () => [{ mode: 'digits' as const, text: '42', confidence: .9 }]);
   const warmup = vi.fn(async () => undefined);
   const contains = vi.fn(async () => options.pagePermission ?? true);
@@ -20,34 +21,34 @@ function harness(options: { pagePermission?: boolean; stateEnabled?: boolean } =
   const setAutoFill = vi.fn(async (enabled: boolean) => { autoFill = enabled; });
   const setRecognitionShortcut = vi.fn(async (shortcut: 'middle' | 'alt-click') => { recognitionShortcut = shortcut; });
   const modelStatus = createModelStatusStore(() => 1000);
-  return { fetch, recognize, warmup, contains, activeTab, enablePage, disablePage, router: createRuntimeRouter({
-    permissions: { contains }, imageFetcher: { fetch }, inferenceHost: { recognize, warmup }, modelStatus,
+  return { capture, recognize, warmup, contains, activeTab, enablePage, disablePage, router: createRuntimeRouter({
+    permissions: { contains }, imageCapture: { capture }, inferenceHost: { recognize, warmup }, modelStatus,
     siteState: { isEnabled: vi.fn(async () => options.stateEnabled ?? false), enablePage, disablePage },
     settings: { read: readSettings, setCopyOnNoField, setAutoFill, setRecognitionShortcut },
     activeTab,
   }), readSettings, setCopyOnNoField, setAutoFill, setRecognitionShortcut };
 }
 
-const sender = { tab: { id: 4, url: 'https://portal.example.test/login' }, url: 'https://portal.example.test/login' };
+const area = { left: 10, top: 20, width: 120, height: 40, viewportWidth: 800, viewportHeight: 600 };
+const sender = { tab: { id: 4, windowId: 1, url: 'https://portal.example.test/login' }, url: 'https://portal.example.test/login' };
 
 describe('background runtime router', () => {
-  it('rejects image acquisition from a sender page without origin permission and never requests it', async () => {
+  it('lets the capture API enforce permission for a validated page sender', async () => {
     const app = harness({ pagePermission: false });
-    await expect(app.router.handle({ type: 'captcha:acquire-image', url: 'https://cdn.example.test/captcha.png' }, sender)).resolves.toEqual({ state: 'image_unavailable', reason: 'permission' });
-    expect(app.fetch).not.toHaveBeenCalled();
-    expect(app.contains).toHaveBeenCalledWith({ origins: ['https://portal.example.test/*'] });
+    app.capture.mockResolvedValueOnce({ state: 'image_unavailable', reason: 'permission' });
+    await expect(app.router.handle({ type: 'captcha:acquire-image', area }, sender)).resolves.toEqual({ state: 'image_unavailable', reason: 'permission' });
+    expect(app.capture).toHaveBeenCalledWith({ id: 4, windowId: 1, url: sender.url }, area);
   });
 
-  it('maps a rejected page-permission check to the typed acquisition denial', async () => {
+  it('rejects malformed capture areas before capturing a tab', async () => {
     const app = harness();
-    app.contains.mockRejectedValueOnce(new Error('permission API unavailable'));
-    await expect(app.router.handle({ type: 'captcha:acquire-image', url: 'https://cdn.example.test/captcha.png' }, sender)).resolves.toEqual({ state: 'image_unavailable', reason: 'permission' });
-    expect(app.fetch).not.toHaveBeenCalled();
+    await expect(app.router.handle({ type: 'captcha:acquire-image', area: { ...area, left: -1 } }, sender)).resolves.toEqual({ state: 'image_unavailable', reason: 'viewport' });
+    expect(app.capture).not.toHaveBeenCalled();
   });
 
   it('routes validated acquisition and OCR requests without result cross-talk', async () => {
     const app = harness();
-    await expect(app.router.handle({ type: 'captcha:acquire-image', url: 'https://portal.example.test/captcha.png' }, sender)).resolves.toMatchObject({ state: 'ready' });
+    await expect(app.router.handle({ type: 'captcha:acquire-image', area }, sender)).resolves.toMatchObject({ state: 'ready' });
     await expect(app.router.handle({ type: 'captcha:recognize', imageDataUrl: 'data:image/png;base64,AQ==', revision: 'r1', modes: ['digits'] }, sender)).resolves.toEqual([{ mode: 'digits', text: '42', confidence: .9 }]);
     expect(app.recognize).toHaveBeenCalledWith('data:image/png;base64,AQ==', 'r1', ['digits']);
   });
@@ -93,23 +94,18 @@ describe('background runtime router', () => {
     expect(app.warmup).toHaveBeenCalledOnce();
   });
 
-  it('accepts same-origin iframe/path senders but rejects cross-origin sender URLs', async () => {
+  it('rejects iframe and cross-origin senders before capturing a tab', async () => {
     const app = harness();
-    await expect(app.router.handle({ type: 'captcha:acquire-image', url: 'https://portal.example.test/captcha.png' }, { tab: { id: 4, url: 'https://portal.example.test/login' }, url: 'https://portal.example.test/frame/captcha' })).resolves.toMatchObject({ state: 'ready' });
-    await expect(app.router.handle({ type: 'captcha:acquire-image', url: 'https://cdn.example.test/captcha.png' }, { tab: { id: 4, url: 'https://portal.example.test/login' }, url: 'https://other.example.test/frame/captcha' })).resolves.toEqual({ state: 'image_unavailable', reason: 'permission' });
+    await expect(app.router.handle({ type: 'captcha:acquire-image', area }, { ...sender, frameId: 3 })).resolves.toEqual({ state: 'image_unavailable', reason: 'permission' });
+    await expect(app.router.handle({ type: 'captcha:acquire-image', area }, { ...sender, url: 'https://other.example.test/frame' })).resolves.toEqual({ state: 'image_unavailable', reason: 'permission' });
+    expect(app.capture).not.toHaveBeenCalled();
   });
 
-  it('acquires same-origin images on an IP address with a port', async () => {
+  it('captures a CAPTCHA area on an HTTP IP page with a port', async () => {
     const app = harness();
-    const intranetSender = { tab: { id: 4, url: 'http://172.26.54.105:9000/login' }, url: 'http://172.26.54.105:9000/login' };
-    await expect(app.router.handle({ type: 'captcha:acquire-image', url: 'http://172.26.54.105:9000/captcha.png' }, intranetSender)).resolves.toMatchObject({ state: 'ready' });
-    expect(app.contains).toHaveBeenCalledWith({ origins: ['http://172.26.54.105/*'] });
-  });
-
-  it('rejects a cross-origin image URL even when the sender page is permitted', async () => {
-    const app = harness();
-    await expect(app.router.handle({ type: 'captcha:acquire-image', url: 'https://cdn.example.test/captcha.png' }, sender)).resolves.toEqual({ state: 'image_unavailable', reason: 'permission' });
-    expect(app.fetch).not.toHaveBeenCalled();
+    const local = { tab: { id: 4, windowId: 1, url: 'http://172.26.54.105:9000/login' }, url: 'http://172.26.54.105:9000/login' };
+    await expect(app.router.handle({ type: 'captcha:acquire-image', area }, local)).resolves.toMatchObject({ state: 'ready' });
+    expect(app.capture).toHaveBeenCalledWith({ id: 4, windowId: 1, url: local.url }, area);
   });
 
   it('does not report a site as enabled after global access is removed', async () => {
@@ -265,7 +261,7 @@ describe('background runtime router', () => {
     const solve = vi.fn(async () => ({ state: 'success' as const }));
     const router = createRuntimeRouter({
       permissions: { contains: app.contains },
-      imageFetcher: { fetch: app.fetch },
+      imageCapture: { capture: app.capture },
       inferenceHost: { recognize: app.recognize, warmup: app.warmup },
       modelStatus: createModelStatusStore(() => 1000),
       siteState: { isEnabled: vi.fn(async () => false), enablePage: app.enablePage, disablePage: app.disablePage },
@@ -285,7 +281,7 @@ describe('background runtime router', () => {
     const solve = vi.fn(async () => ({ state: 'success' as const }));
     const router = createRuntimeRouter({
       permissions: { contains: app.contains },
-      imageFetcher: { fetch: app.fetch },
+      imageCapture: { capture: app.capture },
       inferenceHost: { recognize: app.recognize, warmup: app.warmup },
       modelStatus: createModelStatusStore(() => 1000),
       siteState: { isEnabled: vi.fn(async () => false), enablePage: app.enablePage, disablePage: app.disablePage },
@@ -303,7 +299,7 @@ describe('background runtime router', () => {
     const solve = vi.fn(async () => ({ state: 'success' as const }));
     const router = createRuntimeRouter({
       permissions: { contains: app.contains },
-      imageFetcher: { fetch: app.fetch },
+      imageCapture: { capture: app.capture },
       inferenceHost: { recognize: app.recognize, warmup: app.warmup },
       modelStatus: createModelStatusStore(() => 1000),
       siteState: { isEnabled: vi.fn(async () => false), enablePage: app.enablePage, disablePage: app.disablePage },
@@ -327,7 +323,7 @@ describe('background runtime router', () => {
     const setSliderEnabled = vi.fn(async () => undefined);
     const router = createRuntimeRouter({
       permissions: { contains: app.contains },
-      imageFetcher: { fetch: app.fetch },
+      imageCapture: { capture: app.capture },
       inferenceHost: { recognize: app.recognize, warmup: app.warmup },
       modelStatus: createModelStatusStore(() => 1000),
       siteState: { isEnabled: vi.fn(async () => false), enablePage: app.enablePage, disablePage: app.disablePage },
@@ -354,7 +350,7 @@ describe('background runtime router', () => {
     const solve = vi.fn(() => new Promise<{ state: 'success'; confidence: number }>((resolve) => { finishSolve = resolve; }));
     const router = createRuntimeRouter({
       permissions: { contains: app.contains },
-      imageFetcher: { fetch: app.fetch },
+      imageCapture: { capture: app.capture },
       inferenceHost: { recognize: app.recognize, warmup: app.warmup },
       modelStatus: createModelStatusStore(() => 1000),
       siteState: { isEnabled: vi.fn(async () => false), enablePage: app.enablePage, disablePage: app.disablePage },
@@ -393,7 +389,7 @@ describe('background runtime router', () => {
       .mockResolvedValue({ state: 'success' });
     const router = createRuntimeRouter({
       permissions: { contains: app.contains },
-      imageFetcher: { fetch: app.fetch },
+      imageCapture: { capture: app.capture },
       inferenceHost: { recognize: app.recognize, warmup: app.warmup },
       modelStatus: createModelStatusStore(() => 1000),
       siteState: { isEnabled: vi.fn(async () => false), enablePage: app.enablePage, disablePage: app.disablePage },
@@ -445,7 +441,7 @@ describe('background runtime router', () => {
     }));
     const router = createRuntimeRouter({
       permissions: { contains: app.contains },
-      imageFetcher: { fetch: app.fetch },
+      imageCapture: { capture: app.capture },
       inferenceHost: { recognize: app.recognize, warmup: app.warmup },
       modelStatus,
       siteState: { isEnabled: vi.fn(async () => false), enablePage: app.enablePage, disablePage: app.disablePage },
@@ -474,7 +470,7 @@ describe('background runtime router', () => {
     const app = harness({ pagePermission: true });
     const router = createRuntimeRouter({
       permissions: { contains: app.contains },
-      imageFetcher: { fetch: app.fetch },
+      imageCapture: { capture: app.capture },
       inferenceHost: { recognize: app.recognize, warmup: app.warmup },
       modelStatus: createModelStatusStore(() => 1000),
       siteState: { isEnabled: vi.fn(async () => false), enablePage: app.enablePage, disablePage: app.disablePage },

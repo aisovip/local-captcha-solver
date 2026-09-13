@@ -1,4 +1,6 @@
 import { sha256 } from '@noble/hashes/sha2.js';
+import { isImageCaptureArea, type ImageCaptureArea, type ImageCaptureResult } from '../core/image-capture';
+import { imageRevision } from './dom-snapshot';
 
 import {
   MAX_CAPTCHA_IMAGE_DIMENSION,
@@ -14,11 +16,7 @@ export {
   MAX_IMAGE_DATA_URL_BYTES,
 } from '../core/image-limits';
 
-export type ImageUnavailableReason = 'cors' | 'permission' | 'type' | 'size' | 'network';
-
-export type RemoteImageResult =
-  | { state: 'ready'; bytes: Uint8Array; mimeType: string }
-  | { state: 'image_unavailable'; reason: ImageUnavailableReason };
+export type ImageUnavailableReason = 'cors' | 'permission' | 'type' | 'size' | 'network' | 'viewport' | 'stale';
 
 export type ImageAcquisitionResult =
   | { state: 'ready'; dataUrl: string; mimeType: string; revision: string }
@@ -26,8 +24,7 @@ export type ImageAcquisitionResult =
 
 export interface ImageSourcePrimitives {
   fetch?: (input: string) => Promise<Response>;
-  fetchRemote?: (url: string) => Promise<RemoteImageResult>;
-  pageOrigin?: string;
+  capture?: (area: ImageCaptureArea) => Promise<ImageCaptureResult>;
   toDataUrl?: (image: HTMLImageElement) => string;
   crypto?: Pick<Crypto, 'subtle'>;
 }
@@ -211,6 +208,9 @@ function isUnavailable(result: { bytes: Uint8Array; mimeType: string } | ImageAc
 }
 
 export async function acquireImage(image: HTMLImageElement, primitives: ImageSourcePrimitives = {}): Promise<ImageAcquisitionResult> {
+  if (!image.complete && image.decode !== undefined) {
+    try { await image.decode(); } catch { return unavailable('network'); }
+  }
   const src = image.currentSrc || image.src;
   if (src.length === 0) return unavailable('type');
   const crypto = primitives.crypto ?? globalThis.crypto;
@@ -250,13 +250,35 @@ export async function acquireImage(image: HTMLImageElement, primitives: ImageSou
     if (!isCanvasSecurityError(error)) return unavailable('cors');
   }
 
-  if (primitives.fetchRemote === undefined) return unavailable('cors');
+  if (primitives.capture === undefined) return unavailable('cors');
+  const revision = imageRevision(image);
+  const areaForImage = (): ImageCaptureArea => {
+    const rect = image.getBoundingClientRect();
+    return { left: rect.left, top: rect.top, width: rect.width, height: rect.height, viewportWidth: innerWidth, viewportHeight: innerHeight };
+  };
+  const area = areaForImage();
+  if (window.top !== window || !isImageCaptureArea(area) || document.visibilityState === 'hidden') return unavailable('viewport');
+  const status = document.querySelector<HTMLElement>('[data-local-captcha-status]');
+  const visibility = status?.style.visibility ?? '';
+  let moved = false;
+  const onMove = () => { moved = true; };
+  window.addEventListener('scroll', onMove, true);
+  window.addEventListener('resize', onMove);
   try {
-    const remote = await primitives.fetchRemote(src);
-    return remote.state === 'image_unavailable'
-      ? remote
-      : readyFromBytes(remote.bytes, remote.mimeType, crypto);
+    if (status !== null) status.style.visibility = 'hidden';
+    for (const x of [.1, .5, .9]) for (const y of [.1, .5, .9]) {
+      if (document.elementFromPoint(area.left + area.width * x, area.top + area.height * y) !== image) return unavailable('viewport');
+    }
+    const captured = await primitives.capture(area);
+    if (moved || !image.isConnected || imageRevision(image) !== revision || JSON.stringify(areaForImage()) !== JSON.stringify(area)) return unavailable('stale');
+    if (captured.state !== 'ready') return captured;
+    const parsed = parseDataUrl(captured.dataUrl);
+    return isUnavailable(parsed) ? parsed : readyFromDataUrl(parsed, crypto);
   } catch {
     return unavailable('network');
+  } finally {
+    window.removeEventListener('scroll', onMove, true);
+    window.removeEventListener('resize', onMove);
+    if (status !== null) status.style.visibility = visibility;
   }
 }

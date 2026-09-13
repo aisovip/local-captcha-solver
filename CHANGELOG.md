@@ -6,7 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
-暂无未发布变更。
+### 中文
+
+- 跨域验证码支持读取当前可见图片：直接读取受限时，在本地截取页面并裁出验证码区域。
+- 增加图片访问授权窗口，说明浏览器所需权限，并提供指定网站、所有网站和暂不授权的选择；授权成功后继续识别。
+- 网站运行范围变更会同步到已打开页面；页面切换、截图期间滚动或验证码刷新时丢弃过期结果。
+
+### English
+
+- Read displayed cross-origin CAPTCHAs by locally cropping a visible-tab capture when direct image access is restricted.
+- Explain capture permissions in a consent window with selected-site, all-sites, and cancellation choices, then resume recognition after authorization.
+- Apply website-scope changes to open pages and discard capture results after navigation, scrolling, or a CAPTCHA refresh.
 
 ## [1.3.3] - 2026-09-11
 

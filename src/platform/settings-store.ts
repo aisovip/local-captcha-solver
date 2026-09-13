@@ -56,7 +56,7 @@ export interface SettingsStore {
   setCopyOnNoField(enabled: boolean): Promise<void>;
   setAutoFill(enabled: boolean): Promise<void>;
   setRecognitionShortcut(shortcut: RecognitionShortcut): Promise<void>;
-  setAccessMode(mode: AccessMode): Promise<void>;
+  setAccessMode(mode: AccessMode, enabledHostname?: string): Promise<void>;
   addSelectedSite(rule: SelectedSiteRule): Promise<void>;
   removeSelectedSite(rule: SelectedSiteRule): Promise<void>;
   recognitionModeForPage(pageUrl: string): Promise<SiteRecognitionMode>;
@@ -339,11 +339,19 @@ export function createSettingsStore(adapter: BrowserAdapter): SettingsStore {
         if (settings.recognitionShortcut !== shortcut) await write({ ...settings, recognitionShortcut: shortcut });
       });
     },
-    async setAccessMode(mode: AccessMode): Promise<void> {
+    async setAccessMode(mode: AccessMode, enabledHostname?: string): Promise<void> {
       if (!isAccessMode(mode)) throw new Error('accessMode must be supported');
+      const hostname = enabledHostname === undefined ? undefined : normalizeHostname(enabledHostname);
       await mutate(async () => {
         const settings = await read();
-        if (settings.accessMode !== mode) await write({ ...settings, accessMode: mode });
+        if (hostname === undefined) {
+          if (settings.accessMode !== mode) await write({ ...settings, accessMode: mode });
+          return;
+        }
+        const selectedSites = mode === 'selected' && !settings.selectedSites.some((rule) => selectedSiteMatches(rule, hostname))
+          ? [...settings.selectedSites, { hostname, includeSubdomains: false }]
+          : settings.selectedSites;
+        await write({ ...settings, accessMode: mode, selectedSites, disabledHosts: settings.disabledHosts.filter((host) => host !== hostname) });
       });
     },
     async addSelectedSite(value: SelectedSiteRule): Promise<void> {

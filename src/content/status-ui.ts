@@ -12,6 +12,7 @@ export interface StatusAction {
   kind?: 'primary' | 'secondary';
   successMessage?: string;
   failureMessage?: string;
+  closeOnSuccess?: boolean;
 }
 
 export interface WorkflowStatusOptions {
@@ -282,6 +283,7 @@ function show(
       button.disabled = true;
       let succeeded = true;
       try { succeeded = await action.onClick() !== false; } catch { succeeded = false; }
+      if (succeeded && action.closeOnSuccess === false) { button.disabled = false; return; }
       const nextMessage = succeeded ? action.successMessage : action.failureMessage;
       clearCurrent();
       if (nextMessage) show(nextMessage, anchor, succeeded ? 'success' : 'error', [], { timeoutMs: 1800, presentation: 'toast', statusKind: options.statusKind });
@@ -335,7 +337,21 @@ export function showWorkflowStatus(
     show(title, anchor, options.copyOutcome === 'failed' ? 'error' : options.copyOutcome === 'copied' ? 'success' : 'neutral', options.actions, { detail: `${value} · ${copyDetail}`, onDismiss: options.onDismiss, presentation, statusKind: 'workflow' });
     return;
   }
-  const retryable = result.state === 'recognition_failed' || result.state === 'image_unavailable' || result.state === 'permission_denied' || result.state === 'model_unavailable';
+  if (result.state === 'permission_denied') {
+    show(localized('需要允许读取验证码图片', 'Allow access to the CAPTCHA image'), anchor, 'warning', options.actions, {
+      detail: localized('这张图片受到跨域读取限制。请选择插件的使用范围，并在浏览器提示中确认授权。', 'This image is restricted by cross-origin access rules. Choose where the extension may run, then confirm browser access.'),
+      onDismiss: options.onDismiss, statusKind: 'workflow',
+    });
+    return;
+  }
+  if (result.state === 'image_unavailable' && result.reason === 'viewport') {
+    show(localized('请完整显示验证码后重试', 'Show the entire CAPTCHA and retry'), anchor, 'warning', options.actions, {
+      detail: localized('验证码需要完整位于当前页面的可见区域，并且没有被其他内容遮挡。', 'The CAPTCHA must be fully visible on the current page and unobstructed.'),
+      onDismiss: options.onDismiss, statusKind: 'workflow',
+    });
+    return;
+  }
+  const retryable = result.state === 'recognition_failed' || result.state === 'image_unavailable' || result.state === 'model_unavailable';
   const tone: StatusTone = retryable ? 'error' : result.state === 'stale' ? 'warning' : 'neutral';
   const persistent = retryable || result.state === 'ambiguous_image';
   show((statusLocale === 'zh_CN' ? ZH_MESSAGES : EN_MESSAGES)[result.state], anchor, tone, options.actions, {

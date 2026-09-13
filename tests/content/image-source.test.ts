@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { MAX_CAPTCHA_IMAGE_PIXELS, MAX_IMAGE_BASE64_BYTES, MAX_IMAGE_BYTES } from '../../src/core/image-limits';
 import { isInferenceRequest } from '../../src/ocr/protocol';
@@ -9,6 +9,11 @@ function image(src: string): HTMLImageElement {
   element.src = src;
   element.width = 20;
   element.height = 10;
+  Object.defineProperty(element, 'complete', { value: true });
+  element.getBoundingClientRect = () => ({ left: 10, top: 20, width: 20, height: 10 }) as DOMRect;
+  document.body.append(element);
+  vi.spyOn(document, 'elementFromPoint').mockReturnValue(element);
+  Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
   return element;
 }
 
@@ -19,6 +24,7 @@ function expectOcrImageDataUrl(dataUrl: string): void {
 }
 
 describe('acquireImage', () => {
+  afterEach(() => { vi.restoreAllMocks(); document.body.replaceChildren(); });
   it('acquires image data URLs and produces a stable SHA-256 revision', async () => {
     const result = await acquireImage(image('data:image/png;base64,AQID'));
 
@@ -103,10 +109,10 @@ describe('acquireImage', () => {
 
   it('converts a CORS-readable cross-origin image with the canvas before permission fallback', async () => {
     const toDataUrl = vi.fn(() => 'data:image/jpeg;base64,Bgc=');
-    const fetchRemote = vi.fn();
+    const capture = vi.fn();
 
     const result = await acquireImage(image('https://cdn.example.test/captcha.jpg'), {
-      pageOrigin: 'https://page.example.test', toDataUrl, fetchRemote,
+      toDataUrl, capture,
     });
     expect(result).toMatchObject({
       state: 'ready', mimeType: 'image/jpeg',
@@ -114,33 +120,30 @@ describe('acquireImage', () => {
     });
     if (result.state === 'ready') expectOcrImageDataUrl(result.dataUrl);
     expect(toDataUrl).toHaveBeenCalledOnce();
-    expect(fetchRemote).not.toHaveBeenCalled();
+    expect(capture).not.toHaveBeenCalled();
   });
 
   it('uses the permission-aware fallback only after a tainted canvas failure', async () => {
-    const fetchRemote = vi.fn(async () => ({ state: 'image_unavailable' as const, reason: 'permission' as const }));
+    const capture = vi.fn(async () => ({ state: 'image_unavailable' as const, reason: 'permission' as const }));
 
     await expect(acquireImage(image('https://cdn.example.test/captcha.jpg'), {
-      pageOrigin: 'https://page.example.test',
       toDataUrl: () => { throw new DOMException('tainted canvas', 'SecurityError'); },
-      fetchRemote,
+      capture,
     })).resolves.toEqual({ state: 'image_unavailable', reason: 'permission' });
-    expect(fetchRemote).toHaveBeenCalledWith('https://cdn.example.test/captcha.jpg');
+    expect(capture).toHaveBeenCalledWith(expect.objectContaining({ left: 10, top: 20, width: 20, height: 10 }));
   });
 
-  it('does not trust a remote fallback result with a non-image MIME type', async () => {
+  it('does not trust a capture result with a non-image MIME type', async () => {
     await expect(acquireImage(image('https://cdn.example.test/captcha'), {
-      pageOrigin: 'https://page.example.test',
       toDataUrl: () => { throw new DOMException('tainted canvas', 'SecurityError'); },
-      fetchRemote: async () => ({ state: 'ready', bytes: new Uint8Array([1]), mimeType: 'text/plain' }),
+      capture: async () => ({ state: 'ready', dataUrl: 'data:text/plain;base64,AQ==' }),
     })).resolves.toEqual({ state: 'image_unavailable', reason: 'type' });
   });
 
-  it('returns a SHA-256 revision for a successful remote acquisition', async () => {
+  it('returns a SHA-256 revision for a successful capture', async () => {
     const result = await acquireImage(image('https://cdn.example.test/captcha'), {
-      pageOrigin: 'https://page.example.test',
       toDataUrl: () => { throw new DOMException('tainted canvas', 'SecurityError'); },
-      fetchRemote: async () => ({ state: 'ready', bytes: new Uint8Array([8, 9]), mimeType: 'image/png; charset=binary' }),
+      capture: async () => ({ state: 'ready', dataUrl: 'data:image/png;base64,CAk=' }),
     });
     expect(result).toEqual({
       state: 'ready', dataUrl: 'data:image/png;base64,CAk=', mimeType: 'image/png',
@@ -169,16 +172,40 @@ describe('acquireImage', () => {
     expect(toDataUrl).not.toHaveBeenCalled();
   });
 
-  it('maps a content-side remote message failure to network', async () => {
+  it('maps a capture message failure to network', async () => {
     await expect(acquireImage(image('https://cdn.example.test/captcha'), {
-      pageOrigin: 'https://page.example.test',
       toDataUrl: () => { throw new DOMException('tainted canvas', 'SecurityError'); },
-      fetchRemote: async () => { throw new Error('message disconnected'); },
+      capture: async () => { throw new Error('message disconnected'); },
     })).resolves.toEqual({ state: 'image_unavailable', reason: 'network' });
   });
 
   it('rejects a non-image data URL', async () => {
     await expect(acquireImage(image('data:text/plain;base64,AA=='))).resolves.toEqual({ state: 'image_unavailable', reason: 'type' });
+  });
+
+  it('discards a capture after the image changes or the page scrolls', async () => {
+    for (const change of ['image', 'scroll']) {
+      const candidate = image('https://cdn.example.test/captcha');
+      const result = await acquireImage(candidate, {
+        toDataUrl: () => { throw new DOMException('tainted canvas', 'SecurityError'); },
+        capture: async () => {
+          if (change === 'image') candidate.src = 'https://cdn.example.test/refreshed';
+          else window.dispatchEvent(new Event('scroll'));
+          return { state: 'ready', dataUrl: 'data:image/png;base64,AQID' };
+        },
+      });
+      expect(result).toEqual({ state: 'image_unavailable', reason: 'stale' });
+    }
+  });
+
+  it('does not capture an image covered by another element', async () => {
+    const candidate = image('https://cdn.example.test/captcha');
+    vi.spyOn(document, 'elementFromPoint').mockReturnValue(document.body);
+    const capture = vi.fn();
+    await expect(acquireImage(candidate, {
+      toDataUrl: () => { throw new DOMException('tainted canvas', 'SecurityError'); }, capture,
+    })).resolves.toEqual({ state: 'image_unavailable', reason: 'viewport' });
+    expect(capture).not.toHaveBeenCalled();
   });
 
   it('rejects a data URL whose decoded payload exceeds the raw byte limit', async () => {

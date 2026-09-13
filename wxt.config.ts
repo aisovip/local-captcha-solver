@@ -86,9 +86,8 @@ export default defineConfig({
         'scripting',
         ...(firefox ? [] : ['offscreen', 'debugger']),
       ],
-      ...(process.env.CAPTCHA_E2E_PREGRANT === '1'
-        ? { host_permissions: ['http://*/*', 'https://*/*'] }
-        : { optional_host_permissions: ['http://*/*', 'https://*/*'] }),
+      optional_host_permissions: ['<all_urls>'],
+      ...(process.env.CAPTCHA_E2E_PREGRANT === '1' ? { host_permissions: ['http://*/*', 'https://*/*'] } : {}),
       content_security_policy: {
         extension_pages: "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'",
       },

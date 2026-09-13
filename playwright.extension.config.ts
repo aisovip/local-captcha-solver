@@ -2,7 +2,7 @@ import { defineConfig } from '@playwright/test';
 
 export default defineConfig({
   testDir: './tests/e2e',
-  testMatch: '**/extension.spec.ts',
+  testMatch: ['**/extension.spec.ts', '**/image-access.spec.ts'],
   timeout: 120_000,
   workers: 1,
   projects: [

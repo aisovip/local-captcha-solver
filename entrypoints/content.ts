@@ -1,4 +1,5 @@
 import { acquireImage } from '../src/content/image-source';
+import type { ImageCaptureResult } from '../src/core/image-capture';
 import { imageRevision, isVisible, snapshotForImage, snapshotImages } from '../src/content/dom-snapshot';
 import { observeCaptchaImages } from '../src/content/observer';
 import { clearSliderStatus, clearSliderUserActivityStatus, clearWorkflowStatus, setStatusUiLocale, showRecognizing, showSliderStatus, showWorkflowStatus, type CopyOutcome, type StatusAction } from '../src/content/status-ui';
@@ -75,6 +76,8 @@ function imageSourceSummary(image: HTMLImageElement): string {
 export function createRuntimeContent(runtime: Runtime) {
   let autoFillEnabled = true;
   let recognitionModes = AUTOMATIC_MODES;
+  let imageAccess: { requestId: string; image: HTMLImageElement; revision: string; imageOrigin: string } | undefined;
+  let imageAccessPrompted = false;
   let uiLocale = resolveUiLocale('system', runtime.uiLanguage ?? 'zh-CN');
   let sliderAutomaticEnabled = false;
   let lastSliderAttempt: string | undefined;
@@ -92,7 +95,7 @@ export function createRuntimeContent(runtime: Runtime) {
   let text = CONTENT_TEXT[uiLocale];
   setStatusUiLocale(uiLocale);
   const workflow = createCaptchaWorkflow({
-    acquire: (image) => acquireImage(image, { fetchRemote: async (url) => runtime.sendMessage({ type: 'captcha:acquire-image', url }) as Promise<{ state: 'ready'; bytes: Uint8Array; mimeType: string } | { state: 'image_unavailable'; reason: 'permission' | 'cors' | 'type' | 'size' | 'network' }> }),
+    acquire: (image) => acquireImage(image, { capture: async (area) => runtime.sendMessage({ type: 'captcha:acquire-image', area }) as Promise<ImageCaptureResult> }),
     recognize: async (imageDataUrl, revision, modes) => {
       const response = await runtime.sendMessage({ type: 'captcha:recognize', imageDataUrl, revision, modes });
       if (isRecognitionError(response)) throw Object.assign(new Error(response.code), { code: response.code });
@@ -242,7 +245,17 @@ export function createRuntimeContent(runtime: Runtime) {
         if (choices.length > 0) actions.push({ label: text.chooseField, kind: 'primary', onClick: async () => { const filled = await selectField(choices, result.fillValue); if (filled) recordActivity('filled', 'user_selected_field'); return filled; }, successMessage: text.chosen, failureMessage: text.noSelection });
         if (copyOutcome !== 'copied') actions.push(copyAction(result.fillValue, () => recordActivity('copied', 'user_copied_result')));
       }
-      if (result.state === 'recognition_failed' || result.state === 'image_unavailable' || result.state === 'permission_denied') {
+      if (result.state === 'permission_denied') {
+        const revision = imageRevision(args[0]);
+        if (imageAccess?.image !== args[0] || imageAccess.revision !== revision) {
+          imageAccess = { requestId: `${Date.now()}-${Math.random().toString(36).slice(2)}`, image: args[0], revision, imageOrigin: new URL(args[0].currentSrc || args[0].src).origin };
+        }
+        actions.push({ label: uiLocale === 'zh_CN' ? '选择授权范围' : 'Choose access scope', kind: 'primary', closeOnSuccess: false, onClick: async () => {
+          const response = await runtime.sendMessage({ type: 'captcha:open-image-access' });
+          return typeof response === 'object' && response !== null && (response as { opened?: boolean }).opened === true;
+        }, failureMessage: uiLocale === 'zh_CN' ? '请刷新页面后重试' : 'Refresh the page and try again' });
+      }
+      if (result.state === 'recognition_failed' || result.state === 'image_unavailable') {
         actions.push({ label: text.retry, kind: 'primary', onClick: () => { setTimeout(() => { void displayed.run(args[0], 'explicit'); }, 0); } });
       }
       if (result.state === 'model_unavailable') {
@@ -250,6 +263,10 @@ export function createRuntimeContent(runtime: Runtime) {
       }
       const onDismiss = () => dismissedRevisions.set(args[0], imageRevision(args[0]));
       showWorkflowStatus(result, field?.element ?? args[0], { actions, copyOutcome, onDismiss });
+      if (result.state === 'permission_denied' && !imageAccessPrompted) {
+        imageAccessPrompted = true;
+        void runtime.sendMessage({ type: 'captcha:open-image-access' }).catch(() => undefined);
+      }
       return result;
     },
   };
@@ -271,6 +288,12 @@ export function createRuntimeContent(runtime: Runtime) {
   }).catch(() => undefined);
   const unsubscribeSettings = runtime.settings?.subscribe((settings) => {
     shortcutGeneration += 1;
+    const settingsGeneration = shortcutGeneration;
+    void runtime.sendMessage({ type: 'captcha:get-site-state' }).then((state) => {
+      if (settingsGeneration !== shortcutGeneration || !isSiteState(state) || state.enabled === automaticEnabled) return;
+      if (state.enabled) enable();
+      else disable();
+    }).catch(() => undefined);
     recognitionShortcut = shortcutFromSettings(settings);
     autoFillEnabled = autoFillFromSettings(settings);
     recognitionModes = modesFromSettings(settings);
@@ -397,6 +420,19 @@ export function createRuntimeContent(runtime: Runtime) {
     if (!message || typeof message !== 'object') return undefined;
     const type = (message as { type?: string }).type;
     if (type === 'captcha:ping') return Promise.resolve({ ok: true });
+    if (type === 'captcha:get-image-access') {
+      return Promise.resolve(imageAccess !== undefined && imageAccess.image.isConnected && imageRevision(imageAccess.image) === imageAccess.revision
+        ? { requestId: imageAccess.requestId, imageOrigin: imageAccess.imageOrigin }
+        : undefined);
+    }
+    if (type === 'captcha:retry-image') {
+      if (imageAccess === undefined || (message as { requestId?: unknown }).requestId !== imageAccess.requestId || !imageAccess.image.isConnected || imageRevision(imageAccess.image) !== imageAccess.revision) return Promise.resolve({ state: 'stale' });
+      const image = imageAccess.image;
+      imageAccess = undefined;
+      clearWorkflowStatus();
+      void displayed.run(image, 'explicit');
+      return Promise.resolve({ queued: true });
+    }
     if (type === 'captcha:auto-enable') { enable(); return Promise.resolve({ enabled: true }); }
     if (type === 'captcha:auto-disable') { disable(); return Promise.resolve({ enabled: false }); }
     if (type === 'captcha:scan') { enable(); return Promise.resolve({ queued: true }); }

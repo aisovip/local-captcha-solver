@@ -23,13 +23,15 @@ for (const permission of ['activeTab', 'clipboardWrite', 'contextMenus', 'storag
   requireValue(manifest.permissions.includes(permission), `Firefox build is missing ${permission} permission`);
 }
 requireValue(
-  JSON.stringify(manifest.optional_host_permissions) === JSON.stringify(['http://*/*', 'https://*/*']),
-  'Firefox optional website permissions are incomplete',
+  JSON.stringify(manifest.optional_host_permissions) === JSON.stringify(['<all_urls>']),
+  'Firefox optional capture permission is missing',
 );
+requireValue(!manifest.host_permissions?.length, 'Firefox website access must be optional');
 
 for (const file of [
   'background.js',
   'content-scripts/content.js',
+  'image-access.html',
   'models/captcha-ctc.json',
   'models/captcha-ctc.onnx',
   'onboarding.html',

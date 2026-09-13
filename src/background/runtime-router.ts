@@ -1,4 +1,6 @@
-import type { ImageFetcher } from './image-fetch';
+import type { ImageCapture } from './image-capture';
+import type { ImageAccess } from './image-access';
+import { isImageCaptureArea } from '../core/image-capture';
 import type { InferenceHost } from './inference-host';
 import { hostnameForPage, isRecognitionShortcut, normalizeHostname, type RecognitionShortcut, type SettingsStore } from '../platform/settings-store';
 import { permissionOriginsForPage } from '../platform/permissions';
@@ -8,12 +10,13 @@ import type { EnableRegistrationOptions } from './content-registration';
 import type { DiagnosticContext, ModelStatusStore, WorkflowActivity, WorkflowActivityOutcome } from './model-status';
 import type { SliderActivity, SliderRunResult, SliderSolver } from '../slider/types';
 
-export interface RuntimeSender { tab?: { id?: number; url?: string; windowId?: number }; url?: string; }
+export interface RuntimeSender { tab?: { id?: number; url?: string; windowId?: number }; url?: string; frameId?: number; }
 export interface RuntimeRouterAdapter {
   permissions: {
     contains(details: { origins?: readonly string[]; permissions?: readonly string[] }): Promise<boolean>;
   };
-  imageFetcher: ImageFetcher;
+  imageCapture: ImageCapture;
+  imageAccess?: ImageAccess;
   inferenceHost: InferenceHost;
   modelStatus: ModelStatusStore;
   siteState: {
@@ -79,14 +82,6 @@ function permissionOriginForPage(pageUrl: string): string | undefined {
   try {
     const url = new URL(pageUrl);
     return `${url.protocol}//${hostnameForPage(pageUrl)}/*`;
-  } catch { return undefined; }
-}
-
-function requestOrigin(value: unknown): string | undefined {
-  if (typeof value !== 'string') return undefined;
-  try {
-    const url = new URL(value);
-    return url.protocol === 'http:' || url.protocol === 'https:' ? url.origin : undefined;
   } catch { return undefined; }
 }
 
@@ -218,7 +213,7 @@ export function createRuntimeRouter(adapter: RuntimeRouterAdapter): RuntimeRoute
   return {
     async handle(message: unknown, sender: RuntimeSender): Promise<unknown | undefined> {
       if (message === null || typeof message !== 'object' || !('type' in message)) return undefined;
-      const request = message as { type?: unknown; url?: unknown; imageDataUrl?: unknown; revision?: unknown; modes?: unknown; enabled?: unknown; hostname?: unknown; permissionAlreadyGranted?: unknown; copyOnNoField?: unknown; autoFill?: unknown; recognitionShortcut?: unknown; outcome?: unknown; diagnostic?: unknown; trigger?: unknown };
+      const request = message as { type?: unknown; area?: unknown; tabId?: unknown; pageUrl?: unknown; requestId?: unknown; scope?: unknown; url?: unknown; imageDataUrl?: unknown; revision?: unknown; modes?: unknown; enabled?: unknown; hostname?: unknown; permissionAlreadyGranted?: unknown; copyOnNoField?: unknown; autoFill?: unknown; recognitionShortcut?: unknown; outcome?: unknown; diagnostic?: unknown; trigger?: unknown };
       if (request.type === 'captcha:get-slider-state') {
         if (!canManageDiagnostics(sender) || adapter.sliderSolver === undefined) return { supported: false, enabled: false, debuggerGranted: false };
         const tab = await adapter.activeTab();
@@ -298,15 +293,23 @@ export function createRuntimeRouter(adapter: RuntimeRouterAdapter): RuntimeRoute
       }
       if (request.type === 'captcha:acquire-image') {
         const page = senderPage(sender);
-        const origin = page === undefined ? undefined : permissionOriginForPage(page);
-        let permitted = false;
-        if (origin !== undefined) {
-          try { permitted = await adapter.permissions.contains({ origins: [origin] }); } catch { permitted = false; }
-        }
-        if (typeof request.url !== 'string' || !permitted || requestOrigin(request.url) !== requestOrigin(page)) {
+        if (page === undefined || sender.tab?.id === undefined || sender.tab.windowId === undefined || (sender.frameId ?? 0) !== 0) {
           return { state: 'image_unavailable', reason: 'permission' };
         }
-        return adapter.imageFetcher.fetch(request.url);
+        if (!isImageCaptureArea(request.area)) return { state: 'image_unavailable', reason: 'viewport' };
+        return adapter.imageCapture.capture({ id: sender.tab.id, url: page, windowId: sender.tab.windowId }, request.area);
+      }
+      if (request.type === 'captcha:open-image-access') {
+        if (senderPage(sender) === undefined || sender.tab?.id === undefined || (sender.frameId ?? 0) !== 0) return { opened: false };
+        return { opened: await adapter.imageAccess?.open(sender.tab.id) ?? false };
+      }
+      if (request.type === 'captcha:get-image-access-details') {
+        if (!canManageDiagnostics(sender) || typeof request.tabId !== 'number') return undefined;
+        return adapter.imageAccess?.details(request.tabId);
+      }
+      if (request.type === 'captcha:complete-image-access') {
+        if (!canManageDiagnostics(sender) || typeof request.tabId !== 'number' || typeof request.pageUrl !== 'string' || typeof request.requestId !== 'string' || (request.scope !== 'site' && request.scope !== 'all')) return { granted: false, reason: 'permission' };
+        return adapter.imageAccess?.complete({ tabId: request.tabId, pageUrl: request.pageUrl, requestId: request.requestId, scope: request.scope }) ?? { granted: false, reason: 'permission' };
       }
       if (request.type === 'captcha:recognize') {
         const startedAt = performance.now();

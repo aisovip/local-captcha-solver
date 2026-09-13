@@ -34,6 +34,7 @@ export function permissionOriginsForPage(settings: Pick<CaptchaSettings, 'access
 }
 
 export const GLOBAL_HTTP_ORIGINS = ['http://*/*', 'https://*/*'] as const;
+export const IMAGE_CAPTURE_ORIGINS = ['<all_urls>'] as const;
 
 export function createPermissionManager(adapter: BrowserAdapter, settings: SettingsStore = createSettingsStore(adapter)): PermissionManager {
   return {

@@ -107,7 +107,7 @@ export type WorkflowResult =
     }
   | { state: 'no_candidate' }
   | { state: 'no_field'; candidateId: string; displayText: string; fillValue: string; confidence?: number }
-  | { state: 'image_unavailable'; candidateId: string }
+  | { state: 'image_unavailable'; candidateId: string; reason?: 'cors' | 'type' | 'size' | 'network' | 'viewport' }
   | { state: 'permission_denied'; candidateId: string }
   | { state: 'recognition_failed'; candidateId: string }
   | { state: 'stale'; candidateId: string }

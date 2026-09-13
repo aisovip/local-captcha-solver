@@ -6,6 +6,9 @@ import { createRuntimeMessageListener, type RuntimeMessageListener } from '../pl
 
 const BACKGROUND_MESSAGE_TYPES = new Set([
   'captcha:acquire-image',
+  'captcha:open-image-access',
+  'captcha:get-image-access-details',
+  'captcha:complete-image-access',
   'captcha:recognize',
   'captcha:get-model-status',
   'captcha:retry-model-warmup',

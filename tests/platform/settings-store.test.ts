@@ -33,6 +33,18 @@ function adapterWithGatedReads(): BrowserAdapter & { releaseReads(): void; value
 const defaults = DEFAULT_SETTINGS;
 
 describe('createSettingsStore', () => {
+  it('saves a website scope and enables its hostname together while preserving other exclusions', async () => {
+    const adapter = adapterWith({ ...defaults, accessMode: 'all', selectedSites: [{ hostname: 'existing.test', includeSubdomains: false }], disabledHosts: ['localhost', 'disabled.test'] });
+    const store = createSettingsStore(adapter);
+    await store.setAccessMode('selected', 'localhost');
+    await expect(store.isEnabled('http://localhost:5173')).resolves.toBe(true);
+    await expect(store.isEnabled('http://localhost:8080')).resolves.toBe(true);
+    await expect(store.isEnabled('https://existing.test')).resolves.toBe(true);
+    await expect(store.isEnabled('https://unselected.test')).resolves.toBe(false);
+    await store.setAccessMode('all', 'localhost');
+    await expect(store.isEnabled('https://unselected.test')).resolves.toBe(true);
+    await expect(store.isEnabled('https://disabled.test')).resolves.toBe(false);
+  });
   it('migrates, normalizes, sorts, and deduplicates the version 2 schema', async () => {
     const store = createSettingsStore(adapterWith({ version: 2, disabledHosts: ['z.example.test', 'A.example.test', 'a.example.test'], copyOnNoField: true, autoFill: false, recognitionShortcut: 'alt-click' }));
     await expect(store.read()).resolves.toEqual({ ...defaults, accessMode: 'all', onboardingComplete: true, disabledHosts: ['a.example.test', 'z.example.test'], copyOnNoField: true, autoFill: false, recognitionShortcut: 'alt-click' });

@@ -9,7 +9,7 @@ describe('background runtime composition', () => {
     const reconcile = vi.fn(async () => undefined); const install = vi.fn(async () => undefined); const recognize = vi.fn(async () => [{ mode: 'digits' as const, text: '7', confidence: .9 }]); const warmup = vi.fn(async () => undefined);
     const modelStatus = createModelStatusStore(() => 1000);
     const app = createBackgroundRuntime({
-      permissions: { contains: vi.fn(async () => true) }, imageFetcher: { fetch: vi.fn() }, inferenceHost: { recognize, warmup }, modelStatus,
+      permissions: { contains: vi.fn(async () => true) }, imageCapture: { capture: vi.fn() }, inferenceHost: { recognize, warmup }, modelStatus,
       siteState: { isEnabled: vi.fn(async () => false), enablePage: vi.fn(), disablePage: vi.fn() }, activeTab: vi.fn(async () => undefined),
       registration: { reconcile, enablePage: vi.fn(), disablePage: vi.fn() }, contextMenu: { install, handleClick: vi.fn() },
       runtime: { onMessage: { addListener: runtimeListener }, onStartup: { addListener: startupListener }, onInstalled: { addListener: installedListener } },
@@ -31,7 +31,7 @@ describe('background runtime composition', () => {
     const runtimeListener = vi.fn();
     const recognize = vi.fn(async () => [{ mode: 'digits' as const, text: '7', confidence: .9 }]);
     const app = createBackgroundRuntime({
-      permissions: { contains: vi.fn(async () => true) }, imageFetcher: { fetch: vi.fn() }, inferenceHost: { recognize }, modelStatus: createModelStatusStore(),
+      permissions: { contains: vi.fn(async () => true) }, imageCapture: { capture: vi.fn() }, inferenceHost: { recognize }, modelStatus: createModelStatusStore(),
       siteState: { isEnabled: vi.fn(async () => false), enablePage: vi.fn(), disablePage: vi.fn() }, activeTab: vi.fn(async () => undefined),
       registration: { reconcile: vi.fn(async () => undefined), enablePage: vi.fn(), disablePage: vi.fn() }, contextMenu: { install: vi.fn(async () => undefined), handleClick: vi.fn() },
       runtime: { onMessage: { addListener: runtimeListener }, onStartup: { addListener: vi.fn() }, onInstalled: { addListener: vi.fn() } },
@@ -58,7 +58,7 @@ describe('background runtime composition', () => {
     const modelStatus = createModelStatusStore(() => 1000);
     const warmup = vi.fn(async () => undefined);
     const app = createBackgroundRuntime({
-      permissions: { contains: vi.fn(async () => true) }, imageFetcher: { fetch: vi.fn() }, inferenceHost: { recognize: vi.fn(), warmup }, modelStatus, action,
+      permissions: { contains: vi.fn(async () => true) }, imageCapture: { capture: vi.fn() }, inferenceHost: { recognize: vi.fn(), warmup }, modelStatus, action,
       siteState: { isEnabled: vi.fn(async () => false), enablePage: vi.fn(), disablePage: vi.fn() }, activeTab: vi.fn(async () => undefined),
       registration: { reconcile: vi.fn(async () => undefined), enablePage: vi.fn(), disablePage: vi.fn() }, contextMenu: { install: vi.fn(async () => undefined), handleClick: vi.fn() },
       runtime: { onMessage: { addListener: vi.fn() }, onStartup: { addListener: vi.fn() }, onInstalled: { addListener: vi.fn() } },
@@ -83,7 +83,7 @@ describe('background runtime composition', () => {
     const modelStatus = createModelStatusStore(() => 1000);
     const reportError = vi.fn();
     const app = createBackgroundRuntime({
-      permissions: { contains: vi.fn(async () => true) }, imageFetcher: { fetch: vi.fn() },
+      permissions: { contains: vi.fn(async () => true) }, imageCapture: { capture: vi.fn() },
       inferenceHost: { recognize: vi.fn(), warmup: vi.fn(async () => { throw new Error('offline model'); }) }, modelStatus,
       siteState: { isEnabled: vi.fn(async () => false), enablePage: vi.fn(), disablePage: vi.fn() }, activeTab: vi.fn(async () => undefined),
       registration: { reconcile: vi.fn(async () => undefined), enablePage: vi.fn(), disablePage: vi.fn() }, contextMenu: { install: vi.fn(async () => undefined), handleClick: vi.fn() },
@@ -101,7 +101,7 @@ describe('background runtime composition', () => {
     const action = { setBadgeText: vi.fn(async () => { throw new Error('badge unavailable'); }), setBadgeBackgroundColor: vi.fn(async () => { throw new Error('badge unavailable'); }) };
     const modelStatus = createModelStatusStore(() => 1000);
     const app = createBackgroundRuntime({
-      permissions: { contains: vi.fn(async () => true) }, imageFetcher: { fetch: vi.fn() }, inferenceHost: { recognize: vi.fn(), warmup: vi.fn(async () => undefined) }, modelStatus, action,
+      permissions: { contains: vi.fn(async () => true) }, imageCapture: { capture: vi.fn() }, inferenceHost: { recognize: vi.fn(), warmup: vi.fn(async () => undefined) }, modelStatus, action,
       siteState: { isEnabled: vi.fn(async () => false), enablePage: vi.fn(), disablePage: vi.fn() }, activeTab: vi.fn(async () => undefined),
       registration: { reconcile: vi.fn(async () => undefined), enablePage: vi.fn(), disablePage: vi.fn() }, contextMenu: { install: vi.fn(async () => undefined), handleClick: vi.fn() }, reportError,
       runtime: { onMessage: { addListener: vi.fn() }, onStartup: { addListener: vi.fn() }, onInstalled: { addListener: vi.fn() } },
@@ -118,7 +118,7 @@ describe('background runtime composition', () => {
     const reconcile = vi.fn<() => Promise<void>>().mockRejectedValueOnce(new Error('temporary failure')).mockResolvedValueOnce(undefined);
     const install = vi.fn(async () => undefined);
     const app = createBackgroundRuntime({
-      permissions: { contains: vi.fn(async () => true) }, imageFetcher: { fetch: vi.fn() }, inferenceHost: { recognize: vi.fn() }, modelStatus: createModelStatusStore(),
+      permissions: { contains: vi.fn(async () => true) }, imageCapture: { capture: vi.fn() }, inferenceHost: { recognize: vi.fn() }, modelStatus: createModelStatusStore(),
       siteState: { isEnabled: vi.fn(async () => false), enablePage: vi.fn(), disablePage: vi.fn() }, activeTab: vi.fn(async () => undefined),
       registration: { reconcile, enablePage: vi.fn(), disablePage: vi.fn() }, contextMenu: { install, handleClick: vi.fn() }, reportError,
       runtime: { onMessage: { addListener: runtimeListener }, onStartup: { addListener: startupListener }, onInstalled: { addListener: installedListener } },

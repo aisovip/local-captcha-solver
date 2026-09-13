@@ -86,6 +86,14 @@ Recognition and automatic filling are separate decisions. Automatic filling requ
 
 For sites with a known CAPTCHA alphabet, the popup can store an exact-host override for digits, English letters, alphanumeric text, or arithmetic. The selected alphabet constrains CTC decoding directly; it does not rewrite characters after recognition. Overrides apply to automatic, popup, shortcut, and context-menu recognition and can be restored to automatic detection from Settings.
 
+### Cross-origin CAPTCHA access
+
+When a CAPTCHA image comes from another domain or port, the extension first tries to read the displayed image directly. If the browser restricts that access, it captures the source tab and crops the visible CAPTCHA locally.
+
+If capture access is missing, a consent window shows the page and image origins and offers **Add this site only**, **Enable on all websites**, and **Not now**. Automatic capture requires the browser’s `<all_urls>` permission for either enabling choice. The first adds the current site to the selected-site list and uses selected-site mode; the second enables all HTTP/HTTPS sites. Individually disabled sites remain excluded. Recognition resumes after permission is granted.
+
+Manage the operating scope under **Settings → Static CAPTCHAs** and revoke browser access in the browser’s extension permission settings. The entire CAPTCHA must be visible. Full-page captures are never saved or uploaded.
+
 ## Privacy and permissions
 
 CAPTCHA images, recognition results, settings, and sanitized diagnostics remain in the browser. See the [Privacy Policy](PRIVACY.md) for the complete data-handling description.
@@ -99,7 +107,7 @@ CAPTCHA images, recognition results, settings, and sanitized diagnostics remain 
 | `offscreen` (Chrome/Edge) | Run the bundled ONNX/WebAssembly model in a Manifest V3 offscreen document. Firefox runs the same local model in its background extension page. |
 | `scripting` | Install the page helper after the user grants access. |
 | `storage` | Store settings, permission state, model state, and up to 20 sanitized diagnostic records locally. |
-| Optional HTTP/HTTPS hosts | Let the user grant all-site or exact-site access for OCR, and independently for Chrome/Edge puzzle-slider monitoring. |
+| Optional hosts | Grant page-helper access by site. Automatic cross-origin capture explains and requests `<all_urls>`; automatic operation follows the chosen website scope. Chrome/Edge puzzle-slider scope is managed independently. |
 
 ## Model
 

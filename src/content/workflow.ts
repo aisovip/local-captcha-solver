@@ -69,7 +69,7 @@ export function createCaptchaWorkflow(options: CaptchaWorkflowOptions): CaptchaW
     const candidateId = first.candidate.id;
     let acquired: ImageAcquisitionResult; try { acquired = await options.acquire(image); } catch { return { state: 'image_unavailable', candidateId }; }
     if (!valid(image, record)) return stale(candidateId);
-    if (acquired.state !== 'ready') return acquired.reason === 'permission' ? { state: 'permission_denied', candidateId } : { state: 'image_unavailable', candidateId };
+    if (acquired.state !== 'ready') return acquired.reason === 'permission' ? { state: 'permission_denied', candidateId } : acquired.reason === 'stale' ? stale(candidateId) : { state: 'image_unavailable', candidateId, reason: acquired.reason };
     let results: readonly OcrResult[]; try { results = await options.recognize(acquired.dataUrl, acquired.revision, options.recognitionModes?.() ?? MODES); } catch (error) { return errorResult(candidateId, error); }
     const current = snapshot(image); if (!valid(image, record) || current === undefined || current.candidate.revision !== first.candidate.revision) return stale(candidateId);
     const chosen = choose(results); if (!chosen) return { state: 'needs_confirmation', candidateId, displayText: '', fieldIds: current.fields.map((field) => field.id), reason: 'unusable_result' }; const selected = chosen.candidate;

@@ -1,6 +1,6 @@
 # Privacy Policy / 隐私政策
 
-Effective date: August 26, 2026
+Effective date: September 13, 2026
 
 This policy applies to the Captcha Helper browser extension published from this repository.
 
@@ -15,6 +15,7 @@ Captcha Helper has no account system, advertising, analytics, telemetry, or remo
 The extension may process the following information inside the browser:
 
 - pixels from a user-selected or detected CAPTCHA image;
+- a temporary capture of the visible page when a CAPTCHA cannot be read directly;
 - recognized text, confidence, image dimensions, and arithmetic results;
 - page structure needed to locate a matching input field;
 - exact hostnames authorized or disabled by the user;
@@ -32,6 +33,8 @@ Captcha Helper may write a recognition result to the clipboard when the user exp
 ## Website access
 
 Users choose whether to grant access to all HTTP/HTTPS websites or only selected sites. Site access is used to read a CAPTCHA image, run the page helper, and fill a matching input field after a user-authorized workflow. Permissions can be reviewed, disabled, or removed from the extension settings and browser settings.
+
+For cross-origin CAPTCHA images that cannot be read directly, the extension captures the visible source tab and crops the CAPTCHA locally before recognition. The full capture stays in extension memory; it is not saved, logged, uploaded, or sent to the website. A consent window explains the browser’s required `<all_urls>` permission and lets the user add the current site to selected-site mode or enable all HTTP/HTTPS sites. Both choices request the same browser capture permission; the selected mode controls where the page helper runs automatically. Individually disabled sites remain excluded. User-initiated recognition can also use the browser’s temporary `activeTab` permission.
 
 The Chrome and Edge builds declare the browser debugger permission for the slider Beta to send trusted drag input. The browser may ask the user to confirm this permission during installation or an upgrade. Slider runs can be started manually from the popup or page, or configured for automatic handling in Settings. Slider authorization is independent from OCR authorization and can cover all HTTP/HTTPS sites or an exact hostname list. The debugger connection is detached after every attempt.
 
@@ -69,7 +72,7 @@ Captcha Helper 在用户设备本地处理验证码，不会把验证码图片�
 
 只有在用户明确点击“复制”或启用可选复制行为后，扩展才会把识别结果写入剪贴板；扩展不会读取剪贴板。
 
-用户可以为静态 OCR 选择授权所有 HTTP/HTTPS 网站，或只授权指定网站。Chrome 和 Edge 用户还可以单独设置滑块网站范围。网站权限仅用于读取验证码图片、运行网页辅助脚本，并在用户授权的流程中填写匹配输入框。扩展不会点击提交按钮，也不会自动提交表单。Chrome 和 Edge 构建中的滑块 Beta 声明浏览器调试权限以发送可信拖动，浏览器可能在安装或升级时要求用户确认；滑块可以从弹窗或页面手动处理，也可以在设置中配置自动处理的网站范围。每次操作后都会立即断开调试连接。
+用户可以为静态 OCR 选择所有 HTTP/HTTPS 网站，或只选择指定网站。当跨域验证码无法直接读取时，扩展会在内存中截取来源标签页的可见区域，裁出验证码后在本地识别；完整截图不会保存、记入诊断、上传或发送给网页。授权窗口会说明浏览器要求的 `<all_urls>` 权限，并让用户选择将当前网站加入已选名单，或启用所有 HTTP/HTTPS 网站。两个选项申请相同的浏览器截图权限，所选运行模式决定插件在哪些网站自动工作，单独禁用的网站仍会排除。用户主动识别时也可以使用浏览器提供的 `activeTab` 临时权限。Chrome 和 Edge 用户还可以单独设置滑块网站范围。网站权限仅用于读取验证码图片、运行网页辅助脚本，并在用户授权的流程中填写匹配输入框。扩展不会点击提交按钮，也不会自动提交表单。Chrome 和 Edge 构建中的滑块 Beta 声明浏览器调试权限以发送可信拖动，浏览器可能在安装或升级时要求用户确认；滑块可以从弹窗或页面手动处理，也可以在设置中配置自动处理的网站范围。每次操作后都会立即断开调试连接。
 
 设置、权限状态和诊断记录通过浏览器扩展存储接口保存在本地。用户可以在设置页面清除诊断记录，也可以通过卸载扩展或清除扩展存储删除全部本地数据。
 
