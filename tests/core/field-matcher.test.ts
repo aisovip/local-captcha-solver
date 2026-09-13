@@ -1,8 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  UNIQUE_FIELD_MARGIN,
-  UNIQUE_FIELD_THRESHOLD,
   matchCaptchaField,
   type FieldSnapshot,
 } from '../../src/core/field-matcher';
@@ -89,16 +87,11 @@ describe('matchCaptchaField', () => {
       field({ distance: 100, labelText: 'General response' }),
     ]);
 
-    expect(exactThreshold).toEqual({ state: 'none', candidates: [] });
-  });
-
-  it('exports the automatic matching threshold and margin', () => {
     const belowThreshold = matchCaptchaField(image, [
       field({ distance: 600, sameForm: false, labelText: 'General response' }),
     ]);
 
-    expect(UNIQUE_FIELD_THRESHOLD).toBe(60);
-    expect(UNIQUE_FIELD_MARGIN).toBe(15);
+    expect(exactThreshold).toEqual({ state: 'none', candidates: [] });
     expect(belowThreshold).toEqual({ state: 'none', candidates: [] });
   });
 

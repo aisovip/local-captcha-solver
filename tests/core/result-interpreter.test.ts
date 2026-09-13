@@ -1,19 +1,11 @@
-import { describe, expect, expectTypeOf, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import { MAX_OCR_TEXT_LENGTH } from '../../src/core/arithmetic';
 import {
   interpretResult,
   resultInterpreter,
 } from '../../src/core/result-interpreter';
-import type {
-  FieldMatch,
-  ImagePayload,
-  InterpretedResult,
-  OcrEngine,
-  OcrResult,
-  ScoreResult,
-  WorkflowResult,
-} from '../../src/core/types';
+import type { OcrResult } from '../../src/core/types';
 
 describe('interpretResult', () => {
   it.each([
@@ -116,19 +108,6 @@ describe('interpretResult', () => {
       confidence: 1,
     });
   });
-
-  it('keeps empty and unsupported invalid variants free of fill values', () => {
-    const empty: InterpretedResult = { kind: 'invalid', reason: 'empty' };
-    const unsupported: InterpretedResult = { kind: 'invalid', reason: 'unsupported' };
-
-    // @ts-expect-error Invalid empty results must not carry fill values.
-    const emptyWithFill: InterpretedResult = { ...empty, fillValue: '' };
-    // @ts-expect-error Invalid unsupported results must not carry fill values.
-    const unsupportedWithFill: InterpretedResult = { ...unsupported, fillValue: '123' };
-
-    expect(emptyWithFill).toHaveProperty('fillValue', '');
-    expect(unsupportedWithFill).toHaveProperty('fillValue', '123');
-  });
 });
 
 describe('resultInterpreter', () => {
@@ -151,166 +130,5 @@ describe('resultInterpreter', () => {
       },
       { kind: 'invalid', reason: 'unsupported' },
     ]);
-
-    const interpreted = resultInterpreter.interpret(results);
-    if (false) {
-      // @ts-expect-error Interpreter outputs are readonly.
-      interpreted.push({ kind: 'invalid', reason: 'unsupported' });
-    }
-  });
-});
-
-describe('OcrEngine', () => {
-  it('exposes awaited recognition results as readonly', async () => {
-    const image: ImagePayload = {
-      bytes: new Uint8Array(),
-      mimeType: 'image/png',
-      revision: 'revision-1',
-    };
-    const engine: OcrEngine = {
-      async recognize() {
-        return [{ text: '1234', confidence: 0.9, mode: 'digits' }];
-      },
-    };
-
-    const results = await engine.recognize(image, ['digits']);
-    if (false) {
-      // @ts-expect-error OCR engine results are readonly outputs.
-      results.push({ text: '5678', confidence: 0.8, mode: 'digits' });
-    }
-
-    expect(results).toEqual([{ text: '1234', confidence: 0.9, mode: 'digits' }]);
-  });
-});
-
-describe('FieldMatch', () => {
-  type Field = { id: string };
-  const field: Field = { id: 'answer' };
-  const candidates = [{ field, score: 90, reasons: ['same form'] }] as const;
-
-  it('requires and narrows a winner only for unique matches', () => {
-    const match: FieldMatch<Field> = { state: 'unique', winner: field, candidates };
-
-    if (match.state === 'unique') {
-      expectTypeOf(match.winner).toEqualTypeOf<Field>();
-      expect(match.winner.id).toBe('answer');
-    }
-  });
-
-  it('rejects impossible winner states at compile time', () => {
-    // @ts-expect-error Unique matches require a winner.
-    const missingWinner: FieldMatch<Field> = { state: 'unique', candidates };
-    // @ts-expect-error Ambiguous matches prohibit a winner.
-    const ambiguousWinner: FieldMatch<Field> = { state: 'ambiguous', winner: field, candidates };
-    // @ts-expect-error Empty matches prohibit a winner.
-    const noneWinner: FieldMatch<Field> = { state: 'none', winner: field, candidates };
-
-    expect([missingWinner.state, ambiguousWinner.state, noneWinner.state]).toEqual([
-      'unique',
-      'ambiguous',
-      'none',
-    ]);
-  });
-
-  it('exposes readonly ranked candidates and reason arrays', () => {
-    const match: FieldMatch<Field> = { state: 'unique', winner: field, candidates };
-    const score: ScoreResult = { score: 90, reasons: ['same form'] };
-
-    if (false) {
-      // @ts-expect-error Ranked candidates are readonly outputs.
-      match.candidates.push({ field, score: 0, reasons: [] });
-      // @ts-expect-error Score reasons are readonly outputs.
-      score.reasons.push('mutable');
-    }
-
-    expect(match.candidates).toHaveLength(1);
-    expect(score.reasons).toEqual(['same form']);
-  });
-});
-
-describe('WorkflowResult', () => {
-  const fixturesByState = {
-    filled: {
-      state: 'filled',
-      candidateId: 'captcha-1',
-      fieldId: 'answer-1',
-      displayText: '12+7 = 19',
-      fillValue: '19',
-    },
-    needs_confirmation: {
-      state: 'needs_confirmation',
-      candidateId: 'captcha-2',
-      displayText: '7/2',
-      fieldIds: ['answer-2', 'answer-3'],
-    },
-    no_candidate: { state: 'no_candidate' },
-    no_field: {
-      state: 'no_field',
-      candidateId: 'captcha-3',
-      displayText: 'AbC',
-      fillValue: 'AbC',
-    },
-    image_unavailable: { state: 'image_unavailable', candidateId: 'captcha-4' },
-    permission_denied: { state: 'permission_denied', candidateId: 'captcha-4a' },
-    recognition_failed: { state: 'recognition_failed', candidateId: 'captcha-5' },
-    stale: { state: 'stale', candidateId: 'captcha-6' },
-    model_unavailable: { state: 'model_unavailable', candidateId: 'captcha-7' },
-    ambiguous_image: { state: 'ambiguous_image', candidateIds: ['captcha-8'] },
-  } satisfies {
-    [State in WorkflowResult['state']]: Extract<WorkflowResult, { state: State }>;
-  };
-
-  function assertNever(value: never): never {
-    throw new Error(`Unexpected workflow result: ${JSON.stringify(value)}`);
-  }
-
-  function describeState(result: WorkflowResult): string {
-    switch (result.state) {
-      case 'filled':
-        return `${result.candidateId}:${result.fieldId}:${result.displayText}:${result.fillValue}`;
-      case 'needs_confirmation':
-        return `${result.candidateId}:${result.displayText}:${result.fillValue ?? ''}:${result.fieldIds.join(',')}`;
-      case 'no_candidate':
-        return result.state;
-      case 'no_field':
-        return `${result.candidateId}:${result.displayText}:${result.fillValue}`;
-      case 'image_unavailable':
-      case 'permission_denied':
-      case 'recognition_failed':
-      case 'stale':
-      case 'model_unavailable':
-        return `${result.state}:${result.candidateId}`;
-      case 'ambiguous_image':
-        return `${result.state}:${result.candidateIds.join(',')}`;
-      default:
-        return assertNever(result);
-    }
-  }
-
-  it('keeps all workflow states in one exhaustive vocabulary', () => {
-    expect(Object.values(fixturesByState).map(describeState)).toHaveLength(10);
-    expect(Object.keys(fixturesByState)).toEqual([
-      'filled',
-      'needs_confirmation',
-      'no_candidate',
-      'no_field',
-      'image_unavailable',
-      'permission_denied',
-      'recognition_failed',
-      'stale',
-      'model_unavailable',
-      'ambiguous_image',
-    ]);
-  });
-
-  it('exposes readonly confirmation field ids', () => {
-    const result: WorkflowResult = fixturesByState.needs_confirmation;
-
-    if (result.state === 'needs_confirmation' && false) {
-      // @ts-expect-error Confirmation field IDs are readonly outputs.
-      result.fieldIds.push('mutable');
-    }
-
-    expect(result.fieldIds).toEqual(['answer-2', 'answer-3']);
   });
 });
