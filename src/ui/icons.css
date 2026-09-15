@@ -1,0 +1,12 @@
+.page-icon { display: block; width: 22px; height: 22px; flex-shrink: 0; background: currentColor; mask: var(--icon) center / contain no-repeat; pointer-events: none; forced-color-adjust: none; }
+.icon-info { --icon: url('./icons/info.svg'); }
+.icon-github { --icon: url('./icons/github-logo.svg'); }
+.icon-history { --icon: url('./icons/clock-counter-clockwise.svg'); }
+.icon-coffee { --icon: url('./icons/coffee.svg'); }
+.icon-book { --icon: url('./icons/book-open.svg'); }
+.icon-shield { --icon: url('./icons/shield-check.svg'); }
+.icon-file { --icon: url('./icons/file-text.svg'); }
+.icon-arrow-up-right { --icon: url('./icons/arrow-up-right.svg'); }
+.icon-sparkle { --icon: url('./icons/sparkle.svg'); }
+.icon-settings { --icon: url('./icons/gear-six.svg'); }
+.icon-scroll-down { --icon: url('./icons/caret-down.svg'); }

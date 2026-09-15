@@ -10,7 +10,7 @@ export interface CaptchaScanSkip {
   score: number;
   reason: 'below_threshold';
 }
-export interface CaptchaObserverOptions { onSkip?(skip: CaptchaScanSkip): void }
+export interface CaptchaObserverOptions { onSkip?(skip: CaptchaScanSkip): void; boundImage?(): HTMLImageElement | null | undefined }
 
 const BETTER_CANDIDATE_MARGIN = 10;
 const DIAGNOSTIC_CANDIDATE_THRESHOLD = AUTOMATIC_CANDIDATE_THRESHOLD - 20;
@@ -23,7 +23,8 @@ export function observeCaptchaImages(workflow: CaptchaWorkflow, root: Document =
   const processed = new WeakMap<HTMLImageElement, string>();
   const reportedSkips = new WeakMap<HTMLImageElement, string>();
 
-  const rankedCandidates = () => snapshotImages(root)
+  const rankedCandidates = (bound: HTMLImageElement | undefined) => snapshotImages(root)
+    .filter((snapshot) => bound === undefined || snapshot.element === bound)
     .map((snapshot, order) => {
       const score = scoreCaptchaCandidate(snapshot.candidate).score;
       return { snapshot, score, order };
@@ -32,17 +33,19 @@ export function observeCaptchaImages(workflow: CaptchaWorkflow, root: Document =
 
   const scan = (): void => {
     if (!active) return;
+    const bound = options.boundImage?.();
+    if (bound === null) { selected = undefined; return; }
     if (filled !== undefined) {
       if (filled.image.isConnected && isVisible(filled.image) && imageRevision(filled.image) === filled.revision) return;
       filled = undefined;
     }
 
-    const best = rankedCandidates()[0];
+    const best = rankedCandidates(bound)[0];
     if (best === undefined) {
       selected = undefined;
       return;
     }
-    if (best.score < AUTOMATIC_CANDIDATE_THRESHOLD) {
+    if (bound === undefined && best.score < AUTOMATIC_CANDIDATE_THRESHOLD) {
       selected = undefined;
       if (best.score >= DIAGNOSTIC_CANDIDATE_THRESHOLD && reportedSkips.get(best.snapshot.element) !== best.snapshot.revision) {
         reportedSkips.set(best.snapshot.element, best.snapshot.revision);
@@ -100,7 +103,7 @@ export function observeCaptchaImages(workflow: CaptchaWorkflow, root: Document =
       });
     })) scheduleScan();
   });
-  observer.observe(root.documentElement, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ['src', 'srcset', 'class', 'style', 'hidden', 'disabled', 'readonly', 'aria-label', 'aria-labelledby', 'placeholder', 'name', 'id', 'for'] });
+  observer.observe(root.documentElement, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ['src', 'srcset', 'class', 'style', 'hidden', 'open', 'disabled', 'readonly', 'aria-label', 'aria-labelledby', 'placeholder', 'name', 'id', 'for'] });
   root.addEventListener('load', onLoad, true);
 
   return {

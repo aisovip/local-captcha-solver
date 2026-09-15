@@ -13,7 +13,7 @@
   </p>
 </div>
 
-![Captcha Helper onboarding overview for static CAPTCHAs and puzzle sliders](docs/assets/screenshot-global-1280x800.png)
+![Captcha Helper guided selection of a CAPTCHA and its input](public/guide/binding-en.png)
 
 Captcha Helper is an open-source browser extension for Chrome, Edge, and Firefox that recognizes common static text CAPTCHAs entirely on the user's device. Chrome and Edge builds can also handle single-gap puzzle sliders. It can fill a reliable text result into one matching empty field, but it never clicks a submit button or submits a form.
 
@@ -60,10 +60,18 @@ Open `chrome://extensions`, enable **Developer mode**, choose **Load unpacked**,
 
 ## Usage
 
-1. Complete the onboarding page opened after installation.
-2. Choose all-site access or selected-site access.
-3. Start recognition from the popup, an image context menu, or the configured mouse shortcut.
-4. Review the result when the extension cannot identify one safe, empty input field.
+1. Scroll from the welcome page into site access and filling preferences, or use the navigation buttons. Selected sites is the default. **Finish setup** saves your choices and requests any required site access. Revisit the journey from **Getting started** in the Settings sidebar.
+2. Keep automatic filling enabled for reliable results, and choose whether answers should be copied when no input is found. After setup, try local recognition or configure Chrome/Edge sliders in the same tab. Slider setup has a Back action and its own completion screen.
+3. Open the extension on a website. The popup offers the action for the current CAPTCHA; expand site settings to manage automatic handling and the text format.
+4. Review results beside the CAPTCHA or input. Choose Fill or Copy when confirmation is needed, then submit the form yourself.
+
+### Manual CAPTCHA binding
+
+When automatic detection misses a CAPTCHA, open it on the page and expand **Can’t find it? Choose its location** in the extension popup. Choose the CAPTCHA type, then **Start binding** and **Start selecting**. For text CAPTCHAs, select the image and input. For Chrome/Edge puzzle sliders, select the background image, drag handle, and an empty part of the track. Check the highlighted targets, then choose **Save & recognize**. Use **Back** to adjust a selection, **Move guide** to uncover a target, or Esc to cancel.
+
+Bindings are saved locally for the website origin (scheme, hostname, and port) and current page path. Targets are located again after an image refresh, popup reopening, or page reload. Rebind or remove them from the extension popup. Automatic handling follows the existing text and slider site switches.
+
+Text bindings support images and editable text fields in the current document. Slider bindings use the existing single-gap puzzle workflow. Missing or ambiguous targets and unsupported slider geometry stop processing. Open the CAPTCHA again or rebind its targets. Elements inside iframes or Shadow DOM are not currently supported. Recognition confidence, existing-input protection, and slider stopping conditions still apply.
 
 ### Puzzle sliders
 
@@ -76,11 +84,11 @@ Puzzle-slider controls are available in Chrome and Edge. Firefox provides the st
 
 The extension monitors enabled sites for a unique visible slider, waits for the page and user input to settle, verifies the challenge again before dragging, and stops instead of guessing when the geometry or result is uncertain. Manual handling from the popup is available even when automatic slider handling is off, subject to site access and debugger permission.
 
-In `All sites` mode, turn off `Site takeover` in the popup to disable automatic slider handling for the current site. This choice persists across page reloads and browser restarts. Turn it back on in the popup or restore the site under Settings -> Puzzle sliders -> Disabled sites. The setting applies to the exact hostname and is stored separately from static CAPTCHA settings.
+In `All sites` mode, expand **Settings for this site** in the popup and turn off **Handle sliders automatically** to disable automatic slider handling for the current site. This choice persists across page reloads and browser restarts. Turn it back on in the popup or restore the site under Settings -> Puzzle sliders -> Disabled sites. The setting applies to the exact hostname and is stored separately from static CAPTCHA settings.
 
-### Upgrading to 1.2.0
+### What’s new
 
-Users upgrading from an earlier version see one standalone upgrade tab for the new slider feature. Configure the slider site scope, review the permission summary, and open the GeeTest demo in a separate tab. Existing static OCR settings continue unchanged.
+Every version update opens its introduction once. Version 1.4.0 introduces guided manual binding, a popup that adapts to the page, and results beside their targets. Use **What’s new** in the popup header to reopen the page. **Release history** in the popup footer or Settings → About lists all versions with dates and highlights. Each version has its own introduction and full release notes, available offline. Choose **Start using** to return to your work. Slider setup can be opened separately from Settings. The same full records are available in [CHANGELOG.md](CHANGELOG.md).
 
 Recognition and automatic filling are separate decisions. Automatic filling requires a result above the category-specific confidence threshold and one unique eligible empty field. Existing input is never replaced without confirmation. Structurally ambiguous arithmetic and low-confidence results are rejected instead of guessed.
 
@@ -217,6 +225,16 @@ npm run test:e2e:extension
 Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request. New CAPTCHA styles require authorized samples, exact labels, provenance and licenses, an isolated group, a held-out failing benchmark, and a description of the missing visual mechanism. Security reports should follow [SECURITY.md](SECURITY.md).
 
 Project discussions and broader developer conversations are welcome on [linux.do](https://linux.do). Keep reproducible bugs and scenario contributions in this repository so they remain searchable and testable.
+
+## Support
+
+If Captcha Helper saves you time, you can [buy me a coffee on Ko-fi](https://ko-fi.com/hongshuowang) or use the WeChat code below. Any amount is appreciated, and all features are free to use.
+
+<img src="public/support/wechat.png" width="240" alt="WeChat collection QR code for Hongshuo Wang" />
+
+Scan with WeChat, or [save the image](public/support/wechat.png) and choose it from your album in WeChat’s scanner. Both support options are also available under **Buy me a coffee** in the extension’s popup footer or **Settings → About**.
+
+Thank you for using the project, sharing feedback, and supporting its development.
 
 ## License
 

@@ -1,0 +1,16 @@
+.language-control { flex-shrink: 0; width: 112px; }
+.language-switch { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 2px; padding: 3px; border: 1px solid var(--ch-line); border-radius: 12px; background: var(--ch-soft); }
+.language-switch button { display: grid; place-items: center; min-width: 44px; min-height: 44px; margin: 0; padding: 0 8px; border: 1px solid transparent; border-radius: 8px; color: var(--ch-muted); background: transparent; font: 600 12px/1 var(--ch-font); cursor: pointer; }
+.language-switch button:hover { color: var(--ch-accent); }
+.language-switch button[aria-pressed="true"] { border-color: var(--ch-line); color: var(--ch-accent); background: var(--ch-surface); box-shadow: 0 1px 3px rgb(0 0 0 / .06); }
+.language-switch button:focus-visible { position: relative; outline: 2px solid var(--ch-accent); outline-offset: 1px; }
+.language-switch [data-language]:active { transform: none; }
+.language-switch button[aria-disabled="true"] { cursor: wait; }
+.language-control .language-error { margin: 8px 0 0; color: var(--ch-danger); font-size: 12px; line-height: 1.5; }
+
+@media (prefers-reduced-motion: no-preference) {
+  .language-switch button { transition: color 150ms ease, background-color 150ms ease, border-color 150ms ease; }
+}
+@media (forced-colors: active) {
+  .language-switch button[aria-pressed="true"] { border-color: Highlight; color: HighlightText; background: Highlight; forced-color-adjust: none; }
+}

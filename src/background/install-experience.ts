@@ -31,7 +31,7 @@ export function registerInstallExperience(runtime: InstallExperienceRuntime, tab
       void tabs.create({ url: runtime.getURL('onboarding.html?flow=welcome') }).catch(reportError);
       return;
     }
-    if (details.reason === 'update' && details.previousVersion !== undefined && isOlderThan(details.previousVersion, '1.2.0') && !isOlderThan(currentVersion, '1.2.0')) {
+    if (details.reason === 'update' && details.previousVersion !== undefined && isOlderThan(details.previousVersion, currentVersion)) {
       void tabs.create({ url: runtime.getURL(`onboarding.html?flow=upgrade&version=${encodeURIComponent(currentVersion)}`) }).catch(reportError);
     }
   });

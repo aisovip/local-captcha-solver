@@ -7,6 +7,7 @@ export default defineConfig({
       'entrypoints/**',
       'public/**',
       'src/**',
+      'CHANGELOG.md',
       'LICENSE',
       'README.md',
       'README.zh-CN.md',

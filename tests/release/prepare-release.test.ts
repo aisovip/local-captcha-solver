@@ -16,17 +16,18 @@ describe('release notes preparation', () => {
       '',
       '### 中文',
       '',
-      '- 中文说明',
+      '- 中文说明 [#15](https://github.com/hongshuo-wang/local-captcha-solver/issues/15)',
       '',
       '### English',
       '',
-      '- English notes',
+      '- English notes [#15](https://github.com/hongshuo-wang/local-captcha-solver/issues/15)',
       '',
       '## [1.2.2] - 2026-07-30',
     ].join('\n');
 
     expect(extractChangelogSection(changelog, '1.2.3')).toContain('### 中文');
     expect(extractChangelogSection(changelog, '1.2.3')).toContain('### English');
+    expect(extractChangelogSection(changelog, '1.2.3').match(/\[#15\]\(https:\/\/github\.com\/hongshuo-wang\/local-captcha-solver\/issues\/15\)/g)).toHaveLength(2);
   });
 
   it('rejects release notes missing either language', () => {

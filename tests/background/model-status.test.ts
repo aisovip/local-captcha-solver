@@ -234,4 +234,25 @@ describe('ModelStatusStore', () => {
     expect(store.snapshot().logs).toEqual([]);
     await vi.waitFor(() => expect(write.mock.calls.at(-1)?.[0]).toEqual({ version: 1, logs: [] }));
   });
+
+  it('preserves sanitized binding steps across storage hydration and freezes their target metadata', async () => {
+    let stored: unknown;
+    const persistence = { read: async () => stored, write: vi.fn(async (value: unknown) => { stored = value; }) };
+    const store = createModelStatusStore(() => 1000, persistence);
+    store.bindingRecorded({
+      attemptId: 'abc123-def456', kind: 'slider', step: 'handle', event: 'selected', tag: 'button',
+      attributes: ['id', 'class'], strategy: 'id', closestMatchCount: 1,
+    }, 'https://example.test/login?token=SECRET');
+    await vi.waitFor(() => expect(persistence.write).toHaveBeenCalledOnce());
+    const hydrated = createModelStatusStore(() => 2000, persistence);
+    await hydrated.hydrate();
+    expect(hydrated.snapshot().logs).toEqual(store.snapshot().logs);
+    expect(hydrated.snapshot().logs[0]).toMatchObject({ kind: 'binding', site: 'example.test', binding: { kind: 'slider', step: 'handle', strategy: 'id' } });
+    const binding = hydrated.snapshot().logs[0]!.binding!;
+    expect(Object.isFrozen(binding)).toBe(true);
+    expect(Object.isFrozen(binding.attributes)).toBe(true);
+    expect(JSON.stringify(stored)).not.toContain('SECRET');
+    hydrated.clearLogs();
+    await vi.waitFor(() => expect(stored).toEqual({ version: 1, logs: [] }));
+  });
 });

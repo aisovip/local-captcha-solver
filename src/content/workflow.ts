@@ -5,12 +5,12 @@ import { resultInterpreter } from '../core/result-interpreter';
 import type { OcrResult, RecognitionMode, WorkflowResult } from '../core/types';
 import { fillEmptyField, fillPlaceholderField } from './field-fill';
 import type { ImageAcquisitionResult } from './image-source';
-import { snapshotForImage, type ImageDetailSnapshot } from './dom-snapshot';
+import { snapshotForImage, type ImageDetailSnapshot, type TextFieldElement } from './dom-snapshot';
 
 export type WorkflowTrigger = 'automatic' | 'explicit' | 'context';
 export interface CaptchaWorkflow { run(image: HTMLImageElement, trigger: WorkflowTrigger): Promise<WorkflowResult>; cancel?(image: HTMLImageElement): void; cancelAll?(): void; invalidate?(image: HTMLImageElement): void; }
-export interface CaptchaWorkflowOptions { snapshot?: (image: HTMLImageElement) => ImageDetailSnapshot | undefined; acquire: (image: HTMLImageElement) => Promise<ImageAcquisitionResult>; recognize: (dataUrl: string, revision: string, modes: readonly RecognitionMode[]) => Promise<readonly OcrResult[]>; recognitionModes?: () => readonly RecognitionMode[]; autoFillEnabled?: () => boolean; }
-interface RequestRecord { revision: string; priority: number; token: number; promise: Promise<WorkflowResult>; generation: number; settled: boolean; }
+export interface CaptchaWorkflowOptions { snapshot?: (image: HTMLImageElement) => ImageDetailSnapshot | undefined; acquire: (image: HTMLImageElement) => Promise<ImageAcquisitionResult>; recognize: (dataUrl: string, revision: string, modes: readonly RecognitionMode[]) => Promise<readonly OcrResult[]>; recognitionModes?: () => readonly RecognitionMode[]; autoFillEnabled?: () => boolean; boundField?: (image: HTMLImageElement) => TextFieldElement | null | undefined; }
+interface RequestRecord { revision: string; priority: number; token: number; promise: Promise<WorkflowResult>; generation: number; settled: boolean; boundTarget?: TextFieldElement; }
 const MODES: readonly RecognitionMode[] = ['digits', 'letters', 'alphanumeric', 'arithmetic'];
 const ARITHMETIC_CONFIDENCE_DEFICIT = 0.1;
 const CONFIDENCE_EPSILON = 1e-12;
@@ -73,7 +73,10 @@ export function createCaptchaWorkflow(options: CaptchaWorkflowOptions): CaptchaW
     let results: readonly OcrResult[]; try { results = await options.recognize(acquired.dataUrl, acquired.revision, options.recognitionModes?.() ?? MODES); } catch (error) { return errorResult(candidateId, error); }
     const current = snapshot(image); if (!valid(image, record) || current === undefined || current.candidate.revision !== first.candidate.revision) return stale(candidateId);
     const chosen = choose(results); if (!chosen) return { state: 'needs_confirmation', candidateId, displayText: '', fieldIds: current.fields.map((field) => field.id), reason: 'unusable_result' }; const selected = chosen.candidate;
-    const match = matchCaptchaField(image, current.fields.map((field) => field.field));
+    if (options.boundField?.(image) !== record.boundTarget) return stale(candidateId);
+    const bound = record.boundTarget && current.fields.find((field) => field.element === record.boundTarget);
+    if (record.boundTarget && !bound) return stale(candidateId);
+    const match = bound ? { state: 'unique' as const, winner: bound.field } : matchCaptchaField(image, current.fields.map((field) => field.field));
     if (match.state === 'none') return { state: 'no_field', candidateId, displayText: selected.displayText, fillValue: selected.fillValue, confidence: selected.confidence };
     if (!chosen.safe) return { state: 'needs_confirmation', candidateId, displayText: selected.displayText, fillValue: selected.fillValue, confidence: selected.confidence, fieldIds: match.state === 'unique' ? [match.winner.id] : match.candidates.map((item) => item.field.id), reason: 'low_confidence' };
     if (options.autoFillEnabled?.() === false) return { state: 'needs_confirmation', candidateId, displayText: selected.displayText, fillValue: selected.fillValue, confidence: selected.confidence, fieldIds: match.state === 'unique' ? [match.winner.id] : match.candidates.map((item) => item.field.id), reason: 'auto_fill_disabled' };
@@ -92,5 +95,22 @@ export function createCaptchaWorkflow(options: CaptchaWorkflowOptions): CaptchaW
       : fillPlaceholderField(target.element, selected.fillValue, placeholderValue!);
     return fill.state === 'filled' ? { state: 'filled', candidateId, fieldId: target.id, displayText: selected.displayText, fillValue: selected.fillValue, confidence: selected.confidence } : fill.state === 'stale' ? stale(candidateId) : fill.state === 'not_empty' ? { state: 'needs_confirmation', candidateId, displayText: selected.displayText, fillValue: selected.fillValue, confidence: selected.confidence, fieldIds: [target.id], reason: 'field_not_empty' } : { state: 'no_field', candidateId, displayText: selected.displayText, fillValue: selected.fillValue, confidence: selected.confidence };
   }
-  return { cancel(image) { const record = records.get(image); if (record) records.delete(image); }, invalidate(image) { records.delete(image); }, cancelAll() { generation += 1; }, run(image, trigger) { const first = snapshot(image); if (!first || (trigger === 'automatic' && scoreCaptchaCandidate(first.candidate.candidate).score < AUTOMATIC_CANDIDATE_THRESHOLD)) return Promise.resolve({ state: 'no_candidate' }); const current = records.get(image); const requestPriority = priority(trigger); if (current && !current.settled && current.generation === generation && current.revision === first.candidate.revision && current.priority >= requestPriority) return current.promise; const record = { revision: first.candidate.revision, priority: requestPriority, token: ++sequence, generation, settled: false, promise: Promise.resolve<WorkflowResult>({ state: 'stale', candidateId: first.candidate.id }) }; record.promise = execute(image, first, record, trigger); record.promise.then(() => { record.settled = true; }, () => { record.settled = true; }); records.set(image, record); return record.promise; } };
+  return {
+    cancel(image) { records.delete(image); },
+    invalidate(image) { records.delete(image); },
+    cancelAll() { generation += 1; },
+    run(image, trigger) {
+      const first = snapshot(image);
+      const boundTarget = options.boundField?.(image);
+      if (!first || boundTarget === null || (!boundTarget && trigger === 'automatic' && scoreCaptchaCandidate(first.candidate.candidate).score < AUTOMATIC_CANDIDATE_THRESHOLD)) return Promise.resolve({ state: 'no_candidate' });
+      const current = records.get(image);
+      const requestPriority = priority(trigger);
+      if (current && !current.settled && current.generation === generation && current.revision === first.candidate.revision && current.boundTarget === boundTarget && current.priority >= requestPriority) return current.promise;
+      const record: RequestRecord = { revision: first.candidate.revision, priority: requestPriority, token: ++sequence, generation, settled: false, boundTarget, promise: Promise.resolve<WorkflowResult>({ state: 'stale', candidateId: first.candidate.id }) };
+      record.promise = execute(image, first, record, trigger);
+      record.promise.then(() => { record.settled = true; }, () => { record.settled = true; });
+      records.set(image, record);
+      return record.promise;
+    },
+  };
 }

@@ -18,12 +18,18 @@ const BACKGROUND_MESSAGE_TYPES = new Set([
   'captcha:get-preferences',
   'captcha:set-preferences',
   'captcha:record-activity',
+  'captcha:record-binding',
   'captcha:clear-diagnostics',
   'captcha:reconcile-access',
   'captcha:get-slider-state',
   'captcha:set-slider-enabled',
   'captcha:run-slider',
   'captcha:slider-auto-run',
+  'captcha:get-bindings',
+  'captcha:save-binding',
+  'captcha:remove-binding',
+  'captcha:run-bound-slider',
+  'captcha:cancel-slider',
 ]);
 
 function isBackgroundMessage(message: unknown): boolean {

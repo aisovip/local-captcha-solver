@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <meta charset="utf-8">
+  <title>CAPTCHA binding test page</title>
+  <style>
+    body { padding: 40px; color: #253b31; background: #f5f6f2; font: 16px system-ui, sans-serif; }
+    dialog { padding: 28px; width: 540px; border: 1px solid #bbc9be; border-radius: 12px; }
+    dialog::backdrop { background: #20352c44; }
+    img { display: block; margin-bottom: 20px; width: 200px; height: 60px; }
+    input, button { font: inherit; padding: 10px; margin: 8px 12px 8px 0; }
+    label { display: block; }
+  </style>
+  <h1>Account access</h1>
+  <button id="open">Log in</button>
+  <dialog id="dialog"></dialog>
+  <script>
+    const dialog = document.querySelector('#dialog');
+    window.__submitCount = 0;
+    let revision = 0;
+    const reuse = new URLSearchParams(location.search).has('reuse');
+    function resetDialog() {
+      dialog.innerHTML = '<h2>Verify your request</h2><img class="picture" alt=""><label>First value<input class="form-field" placeholder="First value"></label><label>Second value<input class="form-field" placeholder="Second value"></label><button id="refresh" type="button">Refresh image</button><button id="close" type="button">Close</button>';
+      const image = dialog.querySelector('img');
+      image.src = '/fixtures/digits-002.png';
+      dialog.querySelector('#refresh').addEventListener('click', () => { image.src = revision++ % 2 === 0 ? '/fixtures/digits-017.png' : '/fixtures/digits-002.png'; dialog.querySelector('input[placeholder="Second value"]').value = ''; });
+      dialog.querySelector('#close').addEventListener('click', () => dialog.close());
+    }
+    if (reuse) resetDialog();
+    document.querySelector('#open').addEventListener('click', () => {
+      if (!reuse) resetDialog();
+      dialog.showModal();
+    });
+    document.addEventListener('submit', (event) => { event.preventDefault(); window.__submitCount += 1; });
+  </script>
+</html>

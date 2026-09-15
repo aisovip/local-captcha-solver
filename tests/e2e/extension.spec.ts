@@ -5,6 +5,8 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { startFixtureServer, type FixtureServer } from './fixtures/server';
+import { DEFAULT_SETTINGS } from '../../src/platform/settings-store';
+import { MODEL_LOGS_STORAGE_KEY, type ModelStatusSnapshot } from '../../src/background/model-status';
 
 const execFileAsync = promisify(execFile);
 const repositoryRoot = resolve(import.meta.dirname, '../..');
@@ -17,10 +19,10 @@ const extensionPath = join(
 interface ExtensionApi {
   runtime: {
     getManifest(): { options_ui?: { open_in_tab?: boolean } };
-    sendMessage(message: unknown): Promise<unknown>;
+    sendMessage(message: unknown, callback?: (response: unknown) => void): Promise<unknown>;
   };
   storage: {
-    local: { set(values: Record<string, unknown>): Promise<void> };
+    local: { set(values: Record<string, unknown>): Promise<void>; get(key: string): Promise<Record<string, unknown>> };
   };
   scripting: { getRegisteredContentScripts(): Promise<readonly { id: string }[]> };
   permissions: { contains(details: { permissions: string[] }): Promise<boolean> };
@@ -45,6 +47,12 @@ async function currentWorker(): Promise<Worker> {
     await api.runtime.sendMessage({ type: 'captcha:get-model-status' });
   });
   return context.serviceWorkers().at(-1) ?? await context.waitForEvent('serviceworker');
+}
+
+async function extensionMessage(message: unknown): Promise<unknown> {
+  return extensionPage.evaluate((payload) => new Promise((resolveResponse) => {
+    (globalThis as { chrome?: ExtensionApi }).chrome!.runtime.sendMessage(payload, resolveResponse);
+  }), message);
 }
 
 async function contentMessage(page: Page, request: unknown): Promise<unknown> {
@@ -117,6 +125,14 @@ async function openOnboardingPage(): Promise<Page> {
   const page = await context.newPage();
   await page.goto(`${extensionOrigin}/onboarding.html`);
   return page;
+}
+
+async function configureBindingTest(sliderEnabled: boolean): Promise<void> {
+  await (await currentWorker()).evaluate(async (settings) => {
+    const api = (globalThis as { chrome?: ExtensionApi }).chrome!;
+    await api.storage.local.set({ 'captcha-settings': settings });
+  }, { ...DEFAULT_SETTINGS, accessMode: 'all', sliderAccessMode: sliderEnabled ? 'all' : 'selected', onboardingComplete: true });
+  await expect.poll(async () => (await currentWorker()).evaluate(async () => (await (globalThis as { chrome?: ExtensionApi }).chrome!.scripting.getRegisteredContentScripts()).map((script) => script.id))).toContain('captcha-auto-global');
 }
 
 test.beforeAll(async () => {
@@ -242,6 +258,7 @@ test('recognizes already-loaded CAPTCHA data offline and keeps popup unsupported
   await unsupported.bringToFront();
   const popup = await openActionPopup(unsupported);
   await expect(popup.locator('#site-enabled')).toBeDisabled();
+  await popup.locator('[data-page-options] > summary').click();
   await expect(popup.locator('[data-popup-status]')).toHaveText(/当前页面不支持自动识别。|This page is not supported\./);
   await expect(popup.locator('.brand-mark')).toHaveJSProperty('complete', true);
   await expect(popup.locator('h1')).toHaveText('Captcha Helper');
@@ -262,8 +279,8 @@ test('renders standalone onboarding and settings without horizontal overflow', a
   })).toBe(true);
   const onboarding = await openOnboardingPage();
   await expect(onboarding).toHaveURL(/onboarding\.html/);
-  await expect(onboarding.locator('[data-page="overview"] h1')).toHaveText(/先用一分钟完成本地识别设置|Set up local recognition in one minute/);
-  await expect(onboarding.locator('[data-primary]')).toBeEnabled();
+  await expect(onboarding.locator('.intro-content h1')).toHaveText(/验证码，在本机处理。|Your CAPTCHA. Handled locally./);
+  await expect(onboarding.locator('[data-start]')).toBeVisible();
   expect(await onboarding.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
   await onboarding.screenshot({ path: testInfo.outputPath('captcha-helper-onboarding-access.png'), fullPage: true });
 
@@ -271,22 +288,23 @@ test('renders standalone onboarding and settings without horizontal overflow', a
   expect(await onboarding.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
   await onboarding.screenshot({ path: testInfo.outputPath('captcha-helper-onboarding-access-mobile.png'), fullPage: true });
   await onboarding.setViewportSize({ width: 1024, height: 720 });
-  await expect.poll(() => onboarding.evaluate(() => ({
-    width: document.documentElement.clientWidth,
-    height: document.documentElement.clientHeight,
-    scrollHeight: document.documentElement.scrollHeight,
-  }))).toEqual({ width: 1024, height: 720, scrollHeight: 720 });
+  await expect(onboarding.locator('[data-start]')).toBeInViewport();
+  expect(await onboarding.evaluate(() => document.documentElement.scrollHeight)).toBeGreaterThan(720);
   await onboarding.setViewportSize({ width: 1280, height: 720 });
 
-  await onboarding.locator('[data-language]').selectOption('zh_CN');
-  await expect(onboarding.locator('[data-page="overview"] h1')).toHaveText('先用一分钟完成本地识别设置');
+  await onboarding.locator('[data-language="zh_CN"]').click();
+  await expect(onboarding.locator('.intro-content h1')).toHaveText('验证码，在本机处理。');
 
-  await onboarding.locator('[data-primary]').click();
-  await expect(onboarding.locator('[data-page="static-settings"]')).toBeVisible();
-  await expect(onboarding.locator('[data-primary]')).toBeDisabled();
+  await onboarding.locator('[data-start]').click();
+  await expect(onboarding.locator('[data-page="static-settings"]')).toBeInViewport();
   await onboarding.locator('[data-onboarding-mode="selected"]').click();
   await expect(onboarding.locator('[data-primary]')).toBeEnabled();
+  await onboarding.locator('[data-next]').click();
+  await expect(onboarding.locator('[data-page="preferences"]')).toBeInViewport();
   await onboarding.locator('[data-primary]').click();
+  await expect(onboarding.locator('[data-page="complete"]')).toBeVisible();
+  await expect(onboarding.locator('[data-open-slider]')).toBeVisible();
+  await onboarding.locator('[data-show-demo]').click();
   await expect(onboarding.locator('[data-demo-canvas]')).toBeVisible();
   expect(await onboarding.locator('[data-demo-canvas]').evaluate((canvas) => {
     const context2d = (canvas as HTMLCanvasElement).getContext('2d');
@@ -299,15 +317,22 @@ test('renders standalone onboarding and settings without horizontal overflow', a
     return nonBackgroundPixels;
   })).toBeGreaterThan(100);
   await onboarding.locator('[data-run-demo]').click();
-  await expect(onboarding.locator('[data-demo-status]')).toHaveAttribute('data-state', 'success', { timeout: 30_000 });
+  await expect(onboarding.locator('[data-demo-status]')).toContainText('= 42', { timeout: 30_000 });
   await expect(onboarding.locator('[data-demo-status]')).toContainText('识别结果：');
   await onboarding.screenshot({ path: testInfo.outputPath('captcha-helper-onboarding-complete-zh.png'), fullPage: true });
-  await onboarding.locator('[data-primary]').click();
-  await expect(onboarding.locator('[data-page="slider-settings"]')).toBeVisible();
-  await onboarding.locator('[data-skip-slider]').click();
-  await expect(onboarding.locator('[data-page="slider-demo"]')).toBeVisible();
-  await onboarding.locator('[data-language]').selectOption('en');
-  await expect(onboarding.locator('[data-primary]')).toHaveText('Finish setup and close');
+  await onboarding.locator('[data-language="en"]').click();
+  await expect(onboarding.locator('[data-primary]')).toHaveText('Start using');
+  const pagesBeforeSliders = context.pages().length;
+  await onboarding.locator('[data-open-slider]').click();
+  await expect(onboarding.locator('[data-page="slider-settings"]')).toBeInViewport();
+  await onboarding.locator('[data-back-slider]').click();
+  await expect(onboarding.locator('[data-page="complete"]')).toBeVisible();
+  await onboarding.locator('[data-open-slider]').click();
+  await onboarding.locator('[data-enable-slider]').click();
+  await expect(onboarding.locator('[data-open-geetest]')).toBeVisible();
+  await expect(onboarding.locator('[data-finish-setup]')).toHaveCount(0);
+  await expect(onboarding.locator('[data-page="static-settings"]')).toHaveCount(0);
+  expect(context.pages().length).toBe(pagesBeforeSliders);
   const onboardingClosed = onboarding.waitForEvent('close');
   await onboarding.locator('[data-primary]').click();
   await onboardingClosed;
@@ -318,9 +343,25 @@ test('renders standalone onboarding and settings without horizontal overflow', a
   expect(await options.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
   await options.screenshot({ path: testInfo.outputPath('captcha-helper-options-static.png'), fullPage: true });
 
+  const openingWelcome = context.waitForEvent('page');
+  await options.locator('[data-open-guide="welcome"]').click();
+  const welcomeGuide = await openingWelcome;
+  await expect(welcomeGuide).toHaveURL(/onboarding\.html\?flow=welcome/);
+  await expect(welcomeGuide.locator('.journey-nav li')).toHaveCount(3);
+  await expect(options).toHaveURL(/options\.html/);
+  await welcomeGuide.close();
+
   await options.locator('[data-nav="slider"]').click();
   await expect(options.locator('[data-view="slider"]')).toBeVisible();
-  await expect(options.locator('#interface-locale')).toBeVisible();
+  await expect(options.locator('.language-switch')).toBeVisible();
+
+  const openingSlider = context.waitForEvent('page');
+  await options.locator('[data-open-guide="slider"]').click();
+  const sliderGuide = await openingSlider;
+  await expect(sliderGuide).toHaveURL(/onboarding\.html\?flow=slider/);
+  await expect(sliderGuide.locator('[data-page="slider-settings"]')).toBeVisible();
+  await expect(options).toHaveURL(/options\.html/);
+  await sliderGuide.close();
 
   await options.locator('[data-nav="diagnostics"]').click();
   await expect(options.locator('[data-view="diagnostics"]')).toBeVisible();
@@ -333,7 +374,7 @@ test('renders standalone onboarding and settings without horizontal overflow', a
   await expect(options.locator('.diagnostic-stream')).toContainText(/暂无诊断记录。|No diagnostic records./);
   const statusPopup = await openActionPopup(options);
   await expect(statusPopup.locator('[data-model-indicator]')).toHaveAttribute('data-state', 'ready', { timeout: 30_000 });
-  await expect(statusPopup.locator('[data-latest-activity]')).toHaveText(/暂无执行记录|No activity yet/);
+  await expect(statusPopup.locator('[data-latest-activity]')).toBeHidden();
   await statusPopup.close();
 
   const manualPage = await open('/automatic.html');
@@ -356,7 +397,8 @@ test('renders standalone onboarding and settings without horizontal overflow', a
 
   await options.bringToFront();
   await options.locator('.settings-nav [data-nav="static"]').click();
-  await expect(options.locator('.access-section .status-dot')).toHaveAttribute('data-granted', 'false');
+  await expect(options.locator('[data-mode="selected"]')).toHaveAttribute('aria-pressed', 'true');
+  await expect(options.locator('[data-view="static"] .site-empty')).toBeVisible();
 
   await options.locator('[data-nav="slider"]').click();
   await expect(options.locator('[data-view="slider"]')).toBeVisible();
@@ -370,11 +412,11 @@ test('renders standalone onboarding and settings without horizontal overflow', a
 test('automatically handles a supported slider after the site is explicitly enabled', async ({}, testInfo) => {
   const page = await open('/slider.html');
   const popup = await openActionPopup(page);
-  await popup.locator('[data-popup-tab="slider"]').click();
-  await expect(popup.locator('[data-popup-panel="slider"]')).toBeVisible();
+  await popup.locator('[data-page-options] > summary').click();
+  await expect(popup.locator('[data-slider-panel]')).toBeVisible();
   await expect(popup.locator('[data-slider-enabled]')).toBeEnabled();
   await expect(popup.locator('[data-run-slider]')).toBeEnabled();
-  await expect(popup.locator('[data-slider-state-title]')).toHaveText(/未接管此网站|This site is not taken over/);
+  await expect(popup.locator('[data-slider-state-title]')).toHaveText(/发现拼图滑块|Puzzle slider found/);
   await popup.locator('[data-slider-enabled]').click();
   await expect(popup.locator('[data-slider-enabled]')).toBeChecked();
   await expect.poll(async () => (await currentWorker()).evaluate(async () => {
@@ -424,15 +466,15 @@ test('keeps a site disabled in global slider mode across popup and page reloads'
   await waitForContent(page);
   await expect(page.locator('#status')).toHaveText('验证成功', { timeout: 15_000 });
   const popup = await openActionPopup(page);
-  await popup.locator('[data-popup-tab="slider"]').click();
+  await popup.locator('[data-page-options] > summary').click();
   await expect(popup.locator('[data-slider-enabled]')).toBeChecked();
   await popup.locator('[data-slider-enabled]').click();
   await expect(popup.locator('[data-slider-enabled]')).not.toBeChecked();
   await popup.waitForTimeout(1_200);
   await expect(popup.locator('[data-slider-enabled]')).not.toBeChecked();
-  await expect(popup.locator('[data-slider-state-title]')).toHaveText(/未接管此网站|This site is not taken over/);
+  await expect(popup.locator('[data-slider-state-title]')).toHaveText(/发现拼图滑块|Puzzle slider found/);
   await popup.reload();
-  await popup.locator('[data-popup-tab="slider"]').click();
+  await popup.locator('[data-page-options] > summary').click();
   await expect(popup.locator('[data-slider-enabled]')).not.toBeChecked();
   await popup.close();
 
@@ -447,11 +489,12 @@ test('keeps a site disabled in global slider mode across popup and page reloads'
   const disabledOptions = await openOptionsPage();
   await disabledOptions.locator('[data-nav="slider"]').click();
   await expect(disabledOptions.locator('[data-slider-mode="all"]')).toHaveAttribute('aria-pressed', 'true');
+  await disabledOptions.locator('#slider-disabled > summary').click();
   await expect(disabledOptions.locator('[data-restore-slider="captcha.e2e.test"]')).toBeVisible();
   await disabledOptions.close();
 
   const restoredPopup = await openActionPopup(page);
-  await restoredPopup.locator('[data-popup-tab="slider"]').click();
+  await restoredPopup.locator('[data-page-options] > summary').click();
   await expect(restoredPopup.locator('[data-slider-enabled]')).not.toBeChecked();
   await restoredPopup.locator('[data-slider-enabled]').click();
   await expect(restoredPopup.locator('[data-slider-enabled]')).toBeChecked();
@@ -461,10 +504,141 @@ test('keeps a site disabled in global slider mode across popup and page reloads'
   await page.close();
 });
 
+test('binds a text CAPTCHA across popup recreation, image refresh, and page reload', async ({}, testInfo) => {
+  await configureBindingTest(false);
+  const page = await open('/binding.html?token=BINDING_SECRET#private');
+  await waitForContent(page);
+  await page.locator('#open').click();
+  const popup = await openActionPopup(page);
+  await popup.emulateMedia({ colorScheme: 'dark' });
+  await popup.locator('#app').screenshot({ path: testInfo.outputPath('popup-binding-dark.png') });
+  await popup.locator('[data-binding-help] > summary').click();
+  await popup.locator('#app').screenshot({ path: testInfo.outputPath('popup-binding-expanded-dark.png') });
+  await popup.locator('[data-bind="text"]').click();
+  if (!popup.isClosed()) await popup.close();
+  await page.bringToFront();
+  const picker = page.locator('[data-local-captcha-binding]');
+  await expect(picker).toBeVisible();
+  await picker.locator('[data-start]').click();
+  await page.locator('img.picture').click();
+  await page.locator('input.form-field').evaluateAll(inputs => inputs.forEach(input => input.removeAttribute('placeholder')));
+  await page.locator('input.form-field').nth(1).click();
+  await expect(picker.locator('[data-error]')).toContainText(/诊断|Diagnostics/);
+  await expect.poll(async () => (await extensionMessage({ type: 'captcha:get-model-status' }) as ModelStatusSnapshot).logs.find(log => log.binding?.event === 'rejected')?.binding).toMatchObject({ kind: 'text', step: 'field', reason: 'selector-unavailable', attributes: ['class'], closestMatchCount: 2 });
+  await page.locator('input.form-field').evaluateAll(inputs => inputs.forEach((input, index) => input.setAttribute('placeholder', index === 0 ? 'First value' : 'Second value')));
+  await page.getByPlaceholder('Second value').click();
+  await expect(picker.locator('[data-save]')).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('captcha-binding-preview.png') });
+  await picker.locator('[data-save]').click();
+  await expect(picker).toHaveCount(0);
+  await expect(page.getByPlaceholder('Second value')).toHaveValue('14975', { timeout: 30_000 });
+  await expect(page.getByPlaceholder('First value')).toHaveValue('');
+  await expect.poll(async () => (await (await currentWorker()).evaluate(async key => {
+    return (await (globalThis as { chrome?: ExtensionApi }).chrome!.storage.local.get(key))[key];
+  }, MODEL_LOGS_STORAGE_KEY) as { logs: ModelStatusSnapshot['logs'] }).logs.some(log => log.binding?.event === 'saved')).toBe(true);
+  const diagnostics = await context.newPage();
+  await diagnostics.addInitScript(() => {
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: {
+      writeText: async (value: string) => { (globalThis as { __bindingReport?: string }).__bindingReport = value; },
+    } });
+  });
+  await diagnostics.goto(`${extensionOrigin}/options.html#diagnostics`);
+  await expect(diagnostics.locator('.diagnostic-stream')).toContainText('selector-unavailable');
+  await diagnostics.locator('[data-copy-diagnostics]').click();
+  await expect.poll(() => diagnostics.evaluate(() => (globalThis as { __bindingReport?: string }).__bindingReport ?? '')).toContain('```json');
+  const reportText = await diagnostics.evaluate(() => (globalThis as { __bindingReport?: string }).__bindingReport!);
+  const report = JSON.parse(reportText.slice(8, -4)) as ModelStatusSnapshot & { extensionVersion: string; browser: string };
+  expect(report.extensionVersion).toBe('1.4.0');
+  expect(report.browser).toContain('Chrome/');
+  expect(report.logs.filter(log => log.kind === 'binding').map(log => log.binding?.event)).toEqual(['started', 'selected', 'rejected', 'selected', 'saved']);
+  expect(reportText).not.toContain('BINDING_SECRET');
+  expect(reportText).not.toContain('input[placeholder');
+  await diagnostics.setViewportSize({ width: 390, height: 844 });
+  expect(await diagnostics.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await diagnostics.screenshot({ path: testInfo.outputPath('binding-diagnostics.png'), fullPage: true });
+  await diagnostics.locator('[data-clear-diagnostics]').click();
+  await expect(diagnostics.locator('.diagnostic-stream')).toContainText(/暂无诊断记录|No diagnostic records/);
+  await diagnostics.close();
+  await page.bringToFront();
+  expect(await extensionMessage({ type: 'captcha:set-preferences', autoFill: false })).toMatchObject({ autoFill: false });
+  await page.locator('#refresh').click();
+  const confirmation = page.locator('[data-local-captcha-status]').getByRole('button', { name: /^(填入|Fill)$/ });
+  await expect(confirmation).toBeVisible({ timeout: 10_000 });
+  await page.screenshot({ path: testInfo.outputPath('captcha-binding-confirmation.png') });
+  await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'reduce' });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect.poll(async () => (await page.locator('[data-local-captcha-status]').boundingBox())?.width).toBe(366);
+  const feedback = await page.locator('[data-local-captcha-status]').boundingBox();
+  expect(feedback?.width).toBe(366);
+  expect((feedback?.y ?? 0) + (feedback?.height ?? 0)).toBeLessThanOrEqual(832);
+  await page.locator('[data-local-captcha-status]').screenshot({ path: testInfo.outputPath('captcha-result-mobile-dark.png') });
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.emulateMedia({ colorScheme: 'light' });
+  await confirmation.click({ timeout: 10_000 });
+  await expect(page.getByPlaceholder('Second value')).toHaveValue('99067', { timeout: 30_000 });
+  await extensionMessage({ type: 'captcha:set-preferences', autoFill: true });
+  await page.locator('#close').click();
+  await page.locator('#open').click();
+  await expect(page.getByPlaceholder('Second value')).toHaveValue('14975', { timeout: 30_000 });
+  await page.reload();
+  await page.locator('#open').click();
+  await expect(page.getByPlaceholder('Second value')).toHaveValue('14975', { timeout: 30_000 });
+  await page.goto(`${server.origin}/binding.html?reuse=1`);
+  await waitForContent(page);
+  await page.waitForFunction(() => document.querySelector<HTMLImageElement>('img.picture')?.complete);
+  await page.waitForTimeout(300);
+  await expect(page.getByPlaceholder('Second value')).toHaveValue('');
+  await page.locator('#open').click();
+  await expect(page.getByPlaceholder('Second value')).toHaveValue('14975', { timeout: 10_000 });
+  expect(await submitCount(page)).toBe(0);
+  const manage = await openActionPopup(page);
+  await expect(manage.locator('[data-bind="text"]')).toHaveText(/重新绑定|Rebind CAPTCHA/);
+  await manage.locator('[data-binding-help] > summary').click();
+  await manage.locator('[data-remove-binding="text"]').click();
+  await expect(manage.locator('[data-remove-binding="text"]')).toBeHidden();
+  await manage.close();
+  await page.close();
+});
+
+test('binds popup slider parts and automatically handles the saved targets after reload', async ({}, testInfo) => {
+  await configureBindingTest(false);
+  const page = await open('/aliyun-slider.html?mode=shape&binding=1');
+  await waitForContent(page);
+  await page.locator('#open').click();
+  await expect(contentMessage(page, { type: 'captcha:slider-discover' })).resolves.toMatchObject({ state: 'not-found' });
+  const popup = await openActionPopup(page);
+  await popup.locator('[data-page-options] > summary').click();
+  await popup.locator('[data-binding-help] > summary').click();
+  await popup.locator('[data-bind="slider"]').click();
+  if (!popup.isClosed()) await popup.close();
+  await page.bringToFront();
+  const picker = page.locator('[data-local-captcha-binding]');
+  await picker.locator('[data-start]').click();
+  await page.locator('#scene').click({ position: { x: 200, y: 30 } });
+  await page.locator('#knob').click();
+  await page.locator('#rail').click({ position: { x: 230, y: 20 } });
+  await expect(picker.locator('[data-save]')).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('slider-binding-preview.png') });
+  await picker.locator('[data-save]').click();
+  await expect(picker).toHaveCount(0);
+  await expect(page.locator('#outcome')).toHaveText('滑动成功!', { timeout: 30_000 });
+  await page.reload();
+  await page.locator('#open').click();
+  await page.waitForTimeout(1600);
+  await expect(page.locator('#outcome')).toBeEmpty();
+  const automatic = await openActionPopup(page);
+  await automatic.locator('[data-page-options] > summary').click();
+  await automatic.locator('[data-slider-enabled]').check();
+  await automatic.close();
+  await page.bringToFront();
+  await expect(page.locator('#outcome')).toHaveText('滑动成功!', { timeout: 30_000 });
+  await page.close();
+});
+
 test('preserves search input until the user submits with automatic slider handling enabled', async () => {
   const page = await open('/search.html');
   const popup = await openActionPopup(page);
-  await popup.locator('[data-popup-tab="slider"]').click();
+  await popup.locator('[data-page-options] > summary').click();
   const wasEnabled = await popup.locator('[data-slider-enabled]').isChecked();
   await popup.locator('[data-slider-enabled]').check();
   await expect(popup.locator('[data-slider-enabled]')).toBeChecked();
@@ -494,10 +668,99 @@ test('preserves search input until the user submits with automatic slider handli
   } finally {
     if (!wasEnabled) {
       const restorePopup = await openActionPopup(page);
-      await restorePopup.locator('[data-popup-tab="slider"]').click();
+      await restorePopup.locator('[data-page-options] > summary').click();
       await restorePopup.locator('[data-slider-enabled]').uncheck();
       await restorePopup.close();
     }
+    await page.close();
+  }
+});
+
+
+test('renders the release introduction in both languages and themes and reopens it from the popup', async ({}, testInfo) => {
+  const page = await open('/automatic.html');
+  const popup = await openActionPopup(page);
+  const opened = context.waitForEvent('page');
+  await popup.locator('[data-open-updates]').click();
+  const guide = await opened;
+  await expect(guide).toHaveURL(/flow=upgrade&manual=1/);
+  for (const locale of ['zh_CN', 'en']) {
+    await guide.locator(`[data-language="${locale}"]`).click();
+    await expect(guide.locator('[data-primary]')).toHaveText(locale === 'zh_CN' ? '开始使用' : 'Start using');
+    for (const colorScheme of ['light', 'dark'] as const) {
+      await guide.emulateMedia({ colorScheme, reducedMotion: 'reduce' });
+      await guide.setViewportSize({ width: 1280, height: 800 });
+      await expect.poll(() => guide.locator('.release-visual img').evaluate((image: HTMLImageElement) => image.complete && image.naturalWidth > 0)).toBe(true);
+      expect(await guide.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+      await guide.screenshot({ path: testInfo.outputPath(`release-${locale}-${colorScheme}.png`), fullPage: true });
+      await guide.setViewportSize({ width: 390, height: 844 });
+      expect(await guide.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+      await guide.screenshot({ path: testInfo.outputPath(`release-${locale}-${colorScheme}-mobile.png`), fullPage: true });
+    }
+  }
+  const closed = guide.waitForEvent('close');
+  await guide.locator('[data-primary]').click();
+  await closed;
+  await popup.close();
+  await page.close();
+  const automatic = await context.newPage();
+  const automaticClosed = automatic.waitForEvent('close');
+  await automatic.goto(`${extensionOrigin}/onboarding.html?flow=upgrade`).catch(() => undefined);
+  await automaticClosed;
+});
+
+test('browses the offline release archive and returns to an automatically opened introduction', async ({}, testInfo) => {
+  const page = await open('/automatic.html');
+  const popup = await openActionPopup(page);
+  const opened = context.waitForEvent('page');
+  await popup.locator('[data-open-history]').click();
+  const archive = await opened;
+  await expect(archive).toHaveURL(/flow=history/);
+  await expect(archive.locator('[data-release]')).toHaveCount(8);
+  await expect(archive.locator('[data-current]')).toHaveAttribute('data-release', '1.4.0');
+  await context.setOffline(true);
+  try {
+    for (const locale of ['zh_CN', 'en']) {
+      await archive.locator(`[data-language="${locale}"]`).click();
+      for (const colorScheme of ['light', 'dark'] as const) {
+        await archive.emulateMedia({ colorScheme, reducedMotion: 'reduce' });
+        await archive.setViewportSize({ width: 1280, height: 800 });
+        await archive.screenshot({ path: testInfo.outputPath(`archive-${locale}-${colorScheme}.png`), fullPage: true });
+        await archive.setViewportSize({ width: 390, height: 844 });
+        expect(await archive.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+        await archive.screenshot({ path: testInfo.outputPath(`archive-${locale}-${colorScheme}-mobile.png`), fullPage: true });
+      }
+    }
+    const versions = await archive.locator('[data-release]').evaluateAll((links) => links.map((link) => (link as HTMLElement).dataset.release!));
+    for (const version of versions) {
+      await archive.locator(`[data-release="${version}"]`).click();
+      await expect(archive.locator('[data-release-version]')).toHaveAttribute('data-release-version', version);
+      await expect(archive.locator('.release-notes-body li').first()).not.toBeEmpty();
+      if (version === '1.2.0') {
+        await expect(archive.locator('h1')).toHaveText('A little help with puzzle sliders.');
+        await archive.setViewportSize({ width: 1280, height: 800 });
+        await archive.screenshot({ path: testInfo.outputPath('release-1.2.0-en-dark.png'), fullPage: true });
+      }
+      await archive.goBack();
+      await expect(archive.locator('[data-page="history"]')).toBeVisible();
+    }
+    await archive.evaluate(async () => {
+      const api = (globalThis as { chrome?: { storage: { local: { get(key: string): Promise<Record<string, unknown>>; set(value: unknown): Promise<void> } } } }).chrome!;
+      const stored = await api.storage.local.get('captcha-settings');
+      await api.storage.local.set({ 'captcha-settings': { ...(stored['captcha-settings'] as object), lastSeenUpgradeGuide: '1.3.3' } });
+    });
+    await archive.goto(`${extensionOrigin}/onboarding.html?flow=upgrade&version=1.4.0`);
+    await expect(archive).toHaveURL(/manual=1/);
+    await archive.locator('[data-release-history]').click();
+    await expect(archive.locator('[data-page="history"]')).toBeVisible();
+    await archive.goBack();
+    await expect(archive.locator('[data-release-version="1.4.0"]')).toBeVisible();
+    await archive.reload();
+    await expect(archive.locator('[data-release-version="1.4.0"]')).toBeVisible();
+  } finally {
+    await context.setOffline(false);
+    await archive.close();
+    await popup.close();
     await page.close();
   }
 });

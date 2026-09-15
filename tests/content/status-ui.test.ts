@@ -125,4 +125,30 @@ describe('status UI', () => {
     clearSliderStatus();
     expect(document.querySelector('[data-local-captcha-slider-highlight]')).toBeNull();
   });
+  it('keeps successful results beside their input and removes the brief highlight', async () => {
+    vi.useFakeTimers();
+    const field = document.createElement('input');
+    document.body.append(field);
+    vi.spyOn(field, 'getBoundingClientRect').mockReturnValue(new DOMRect(50, 100, 150, 40));
+    showWorkflowStatus({ state: 'filled', candidateId: 'image-1', displayText: '14975', fillValue: '14975', fieldId: 'field-1' }, field);
+    expect(host()?.style.left).toBe('210px');
+    expect(host()?.style.top).toBe('100px');
+    expect(shadow()?.querySelector('.target-highlight')).not.toBeNull();
+    expect(shadow()?.querySelector('.result-value')?.textContent).toBe('14975');
+    await vi.advanceTimersByTimeAsync(1600);
+    expect(shadow()?.querySelector('.target-highlight')).toBeNull();
+    expect(host()).not.toBeNull();
+    field.remove();
+  });
+
+  it('preserves the answer and actions when a fill fails', async () => {
+    const onClick = vi.fn(async () => false);
+    showWorkflowStatus({ state: 'needs_confirmation', candidateId: 'image-1', displayText: 'A8K2', fillValue: 'A8K2', fieldIds: ['field-1'] }, undefined, { actions: [{ label: 'Fill', kind: 'primary', onClick, failureMessage: 'Try again' }] });
+    const action = shadow()?.querySelector<HTMLButtonElement>('.action')!;
+    action.click();
+    await vi.waitFor(() => expect(action.disabled).toBe(false));
+    expect(shadow()?.querySelector('.result-value')?.textContent).toBe('A8K2');
+    expect(shadow()?.querySelector('.detail')?.textContent).toBe('Try again');
+  });
+
 });

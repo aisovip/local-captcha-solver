@@ -1,6 +1,7 @@
 import { createInferenceHost } from '../src/background/inference-host';
 import type { InferenceBrowser, InferenceHost } from '../src/background/inference-host';
 import { createImageCapture, type ImageCaptureAdapter } from '../src/background/image-capture';
+import { createBindingStore } from '../src/platform/binding-store';
 import { createImageAccess } from '../src/background/image-access';
 import { createSettingsStore } from '../src/platform/settings-store';
 import { createExtensionBrowserAdapter } from '../src/background/extension-browser';
@@ -133,6 +134,7 @@ export default defineBackground(() => {
       openDialog: (tabId) => extension.windows.create({ url: `${runtime.getURL('/image-access.html')}?tabId=${tabId}`, type: 'popup', width: 480, height: 700 }),
     }),
     inferenceHost: host,
+    bindings: createBindingStore(settingsAdapter),
     modelStatus,
     siteState: { isEnabled: settings.isEnabled, enablePage: registration.enablePage, disablePage: registration.disablePage, reconcile: registration.reconcile },
     settings,

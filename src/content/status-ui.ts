@@ -1,6 +1,8 @@
 import type { WorkflowResult } from '../core/types';
 import type { UiLocale } from '../platform/i18n';
 import { visibleSliderInteractionTarget } from '../slider/challenge-discovery';
+import { mountPageOverlay } from './page-overlay';
+import theme from '../ui/theme.css?raw';
 import type { SliderResultState, SliderRunResult } from '../slider/types';
 
 export type CopyOutcome = 'copied' | 'disabled' | 'failed';
@@ -98,14 +100,14 @@ function highlightSlider(): Element | undefined {
   Object.assign(host.style, { position: 'fixed', zIndex: '2147482999', pointerEvents: 'none', overflow: 'visible' });
   const shadow = host.attachShadow({ mode: 'open' });
   shadow.innerHTML = `
-    <style>
+    <style>${theme}
       :host { display: block; }
-      .ring { width: 100%; height: 100%; box-sizing: border-box; border: 3px solid #f08c00; border-radius: 8px; box-shadow: 0 0 0 4px rgba(240,140,0,.26), 0 0 22px rgba(240,140,0,.46); animation: pulse 1.15s ease-in-out infinite; }
-      @keyframes pulse { 50% { opacity: .58; box-shadow: 0 0 0 7px rgba(240,140,0,.16), 0 0 30px rgba(240,140,0,.32); } }
+      .ring { width: 100%; height: 100%; box-sizing: border-box; border: 2px solid var(--ch-warning); border-radius: 8px; animation: pulse 1.15s ease-in-out 2; }
+      @keyframes pulse { 50% { opacity: .58; } }
       @media (prefers-reduced-motion: reduce) { .ring { animation: none; } }
     </style>
     <div class="ring"></div>`;
-  document.body.append(host);
+  mountPageOverlay(host, target);
   const update = () => {
     if (!target.isConnected || target.getClientRects().length === 0) return;
     const rect = target.getBoundingClientRect();
@@ -131,20 +133,17 @@ function overlapArea(left: number, top: number, width: number, height: number, r
   return overlapWidth * overlapHeight;
 }
 
-function position(host: HTMLElement, anchor: Element | undefined, presentation: StatusPresentation): void {
-  const width = Math.min(304, Math.max(240, globalThis.innerWidth - 24));
-  const height = Math.min(220, host.getBoundingClientRect().height || 112);
+function position(host: HTMLElement, anchor: Element | undefined): void {
+  const width = globalThis.innerWidth <= 600 ? Math.max(0, globalThis.innerWidth - 24) : Math.min(336, globalThis.innerWidth - 24);
+  const height = host.getBoundingClientRect().height || 112;
   Object.assign(host.style, { width: `${width}px`, right: 'auto', bottom: 'auto' });
-  if (presentation === 'toast') {
-    Object.assign(host.style, { left: `${Math.max(12, globalThis.innerWidth - width - 12)}px`, top: '12px' });
-    return;
-  }
   if (globalThis.innerWidth <= 600) {
     Object.assign(host.style, { left: '12px', top: 'auto', bottom: '12px' });
     return;
   }
 
-  const rect = anchor?.isConnected ? anchor.getBoundingClientRect() : undefined;
+  const anchorRect = anchor?.isConnected ? anchor.getBoundingClientRect() : undefined;
+  const rect = anchorRect && anchorRect.bottom > 0 && anchorRect.top < innerHeight && anchorRect.right > 0 && anchorRect.left < innerWidth ? anchorRect : undefined;
   const fallback: Point = { left: Math.max(12, globalThis.innerWidth - width - 12), top: Math.max(12, globalThis.innerHeight - height - 12) };
   if (rect === undefined) {
     Object.assign(host.style, { left: `${fallback.left}px`, top: `${fallback.top}px` });
@@ -169,9 +168,10 @@ function position(host: HTMLElement, anchor: Element | undefined, presentation: 
     );
   }
   candidates.push(fallback);
-  const blockers = Array.from(document.querySelectorAll<HTMLElement>('button, [role="button"], input[type="button"], input[type="submit"], input[type="image"]'))
+  const blockers = Array.from(document.querySelectorAll<HTMLElement>('button, [role="button"], input, textarea, select'))
     .filter((element) => element.isConnected && element.getClientRects().length > 0)
     .map((element) => element.getBoundingClientRect());
+  blockers.push(rect);
   const ranked = candidates.map((candidate, index) => {
     const left = clampLeft(candidate.left);
     const top = clampTop(candidate.top);
@@ -188,7 +188,7 @@ function show(
   anchor: Element | undefined,
   tone: StatusTone,
   actions: readonly StatusAction[] = [],
-  options: { timeoutMs?: number; onDismiss?: () => void; detail?: string; presentation?: StatusPresentation; nonInteractive?: boolean; statusKind?: 'workflow' | 'slider' | 'slider-user-active' } = {},
+  options: { timeoutMs?: number; onDismiss?: () => void; detail?: string; value?: string; highlight?: boolean; presentation?: StatusPresentation; nonInteractive?: boolean; statusKind?: 'workflow' | 'slider' | 'slider-user-active' } = {},
 ): void {
   clearCurrent();
   const host = document.createElement('div');
@@ -205,58 +205,47 @@ function show(
   if (anchor?.isConnected) host.dataset.anchor = 'candidate';
   const shadow = host.attachShadow({ mode: 'open' });
   shadow.innerHTML = `
-    <style>
-      :host { color-scheme: light dark; font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; letter-spacing: 0; }
-      .panel { pointer-events: auto; display: grid; grid-template-columns: 28px minmax(0,1fr) auto; gap: 10px; align-items: start; padding: 12px; color: #202522; background: rgba(252,253,252,.98); border: 1px solid #d9dedb; border-radius: 8px; box-shadow: 0 12px 32px rgba(31,44,36,.16), 0 2px 8px rgba(31,44,36,.08); animation: enter .18s ease-out; }
-      .panel[data-presentation="toast"] { grid-template-columns: 24px minmax(0,1fr); align-items: center; padding: 10px 12px; box-shadow: 0 8px 24px rgba(31,44,36,.14); }
-      .panel[data-presentation="toast"] .icon { width: 24px; height: 24px; border-radius: 6px; font-size: 13px; }
-      .panel[data-presentation="toast"] .content { padding-top: 0; }
-      .icon { width: 28px; height: 28px; display: grid; place-items: center; border-radius: 7px; color: #3f5f4b; background: #eaf0ec; font: 600 15px/1 ui-monospace, SFMono-Regular, Menlo, monospace; }
-      .panel[data-tone="success"] .icon { color: #21623b; background: #e3f2e8; }
-      .panel[data-tone="warning"] .icon { color: #765512; background: #f8edcf; }
-      .panel[data-status-kind="slider-user-active"] { border: 2px solid #e08a00; box-shadow: 0 0 0 4px rgba(240,140,0,.18), 0 14px 34px rgba(122,76,0,.24); }
-      .panel[data-status-kind="slider-user-active"] .icon { color: #704300; background: #ffe3a3; animation: pulse 1.15s ease-in-out infinite; }
+    <style>${theme}
+      :host { font-family: var(--ch-font); letter-spacing: 0; }
+      * { box-sizing: border-box; } [hidden] { display: none !important; }
+      .panel { pointer-events: auto; position: relative; display: grid; grid-template-columns: 24px minmax(0,1fr) 32px; gap: 12px; align-items: start; padding: 18px; color: var(--ch-text); background: var(--ch-surface); border: 1px solid var(--ch-line); border-radius: 16px; box-shadow: var(--ch-shadow); }
+      .panel[data-presentation="toast"] { padding: 14px 16px; gap: 10px; }
+      .icon { width: 24px; height: 24px; display: grid; place-items: center; border-radius: 50%; color: var(--ch-accent); background: var(--ch-soft); font: 600 14px/1 var(--ch-font); }
+      .panel[data-tone="warning"] .icon { color: var(--ch-warning); }
+      .panel[data-tone="error"] .icon { color: var(--ch-danger); }
+      .panel[data-status-kind="slider-user-active"] { border-color: var(--ch-warning); }
       .panel[data-non-interactive="true"] { pointer-events: none; }
-      .panel[data-tone="error"] .icon { color: #922f2b; background: #f8e5e3; }
-      .panel[data-tone="running"] .icon { animation: pulse 1s ease-in-out infinite; }
-      .content { min-width: 0; padding-top: 3px; }
+      .content { min-width: 0; padding-top: 2px; }
       .message, .detail { margin: 0; overflow-wrap: anywhere; letter-spacing: 0; }
-      .message { color: inherit; font-size: 13px; font-weight: 600; line-height: 1.45; }
-      .detail { margin-top: 3px; color: #646d67; font-size: 12px; line-height: 1.45; }
-      .close { width: 28px; height: 28px; display: grid; place-items: center; margin: 0; padding: 0; border: 0; border-radius: 6px; color: #68716b; background: transparent; cursor: pointer; font: 18px/1 ui-sans-serif, sans-serif; transition: background .16s ease, color .16s ease, transform .16s ease; }
-      .close[hidden] { display: none; }
-      .close:hover { color: #202522; background: #edf0ee; }
-      .close:active { transform: translateY(1px); }
-      .close:focus-visible, button.action:focus-visible { outline: 2px solid #47725a; outline-offset: 2px; }
-      .actions { grid-column: 2 / 4; display: flex; flex-wrap: wrap; gap: 7px; margin-top: 1px; }
-      button.action { min-height: 30px; padding: 5px 11px; border: 1px solid #cbd2cd; border-radius: 6px; color: #303732; background: #fff; cursor: pointer; font: 600 12px/1.3 inherit; letter-spacing: 0; transition: background .16s ease, border-color .16s ease, transform .16s ease; }
-      button.action:hover { background: #f1f4f2; border-color: #aeb9b1; }
-      button.action:active { transform: translateY(1px); }
-      button.action.primary { color: #fff; background: #315c43; border-color: #315c43; }
-      button.action.primary:hover { background: #254c35; border-color: #254c35; }
-      button.action:disabled { opacity: .58; cursor: wait; }
-      @keyframes enter { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
-      @keyframes pulse { 50% { opacity: .5; } }
-      @media (prefers-color-scheme: dark) {
-        .panel { color: #edf1ee; background: rgba(31,35,32,.98); border-color: #4b514d; box-shadow: 0 14px 34px rgba(0,0,0,.34); }
-        .icon { color: #c3d4c8; background: #3b4840; }
-        .panel[data-tone="success"] .icon { color: #bde4c8; background: #284934; }
-        .panel[data-tone="warning"] .icon { color: #ecd28e; background: #4f4224; }
-        .panel[data-status-kind="slider-user-active"] { border-color: #e5a63b; box-shadow: 0 0 0 4px rgba(229,166,59,.2), 0 14px 34px rgba(0,0,0,.4); }
-        .panel[data-status-kind="slider-user-active"] .icon { color: #ffe2a3; background: #61491e; }
-        .panel[data-tone="error"] .icon { color: #f0b4af; background: #56312f; }
-        .detail { color: #acb4af; }
-        .close { color: #aeb6b1; }
-        .close:hover { color: #fff; background: #404541; }
-        button.action { color: #edf1ee; background: #343936; border-color: #565e58; }
-        button.action:hover { background: #414843; border-color: #707b73; }
-        button.action.primary { color: #fff; background: #47785a; border-color: #47785a; }
+      .message { font-size: 14px; font-weight: 600; line-height: 1.45; }
+      .detail { margin-top: 7px; color: var(--ch-muted); font-size: 12px; line-height: 1.6; }
+      .result { margin-top: 14px; }
+      .result-label { display: block; color: var(--ch-muted); font-size: 11px; }
+      .result-value { display: block; margin-top: 3px; color: var(--ch-text); font: 600 24px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .5px; overflow-wrap: anywhere; }
+      .panel[data-presentation="toast"] .result { margin-top: 5px; }
+      .panel[data-presentation="toast"] .result-label { display: none; }
+      .panel[data-presentation="toast"] .result-value { font-size: 18px; }
+      .close { width: 32px; height: 32px; display: grid; place-items: center; margin: -4px -6px 0 0; padding: 0; border: 0; border-radius: 8px; color: var(--ch-muted); background: transparent; cursor: pointer; font: 22px/1 var(--ch-font); }
+      .close:hover { background: var(--ch-soft); }
+      button:focus-visible { outline: 2px solid var(--ch-accent); outline-offset: 3px; }
+      .actions { grid-column: 2 / 4; display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
+      button.action { min-height: 38px; padding: 8px 14px; border: 0; border-radius: 9px; color: var(--ch-accent); background: var(--ch-soft); cursor: pointer; font: 600 13px/1.4 var(--ch-font); letter-spacing: 0; }
+      button.action.primary { color: var(--ch-on-accent); background: var(--ch-accent); }
+      button.action.primary:hover { background: var(--ch-accent-hover); }
+      button.action:disabled { opacity: .5; cursor: wait; }
+      .target-highlight { position: fixed; pointer-events: none; border: 2px solid var(--ch-accent); border-radius: 6px; }
+      @media (max-width: 600px) { button.action { min-height: 44px; } .actions { margin-top: 8px; } }
+      @media (prefers-reduced-motion: no-preference) {
+        .panel { animation: enter 180ms ease-out; }
+        .panel[data-tone="running"] .icon { animation: pulse 1.2s ease-in-out infinite; }
+        button { transition: transform 150ms ease; } button:active { transform: scale(.98); }
+        @keyframes enter { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+        @keyframes pulse { 50% { opacity: .5; } }
       }
-      @media (prefers-reduced-motion: reduce) { .panel, .icon { animation: none !important; } }
     </style>
     <section class="panel" data-tone="${tone}" data-presentation="${presentation}" data-non-interactive="${options.nonInteractive === true}" data-status-kind="${options.statusKind ?? ''}" role="status" aria-live="polite">
       <span class="icon" aria-hidden="true">${ICONS[tone]}</span>
-      <div class="content"><p class="message"></p><p class="detail" hidden></p></div>
+      <div class="content"><p class="message"></p><div class="result" hidden><span class="result-label">${localized('识别结果', 'Recognized answer')}</span><strong class="result-value"></strong></div><p class="detail" hidden></p></div>
       <button class="close" type="button" aria-label="${localized('关闭', 'Close')}">×</button>
       <div class="actions"></div>
     </section>`;
@@ -265,6 +254,10 @@ function show(
   const close = shadow.querySelector<HTMLButtonElement>('.close')!;
   const actionsElement = shadow.querySelector<HTMLElement>('.actions')!;
   messageElement.textContent = message;
+  if (options.value) {
+    shadow.querySelector<HTMLElement>('.result')!.hidden = false;
+    shadow.querySelector('.result-value')!.textContent = options.value;
+  }
   if (options.detail) {
     detailElement.hidden = false;
     detailElement.textContent = options.detail;
@@ -283,22 +276,43 @@ function show(
       button.disabled = true;
       let succeeded = true;
       try { succeeded = await action.onClick() !== false; } catch { succeeded = false; }
-      if (succeeded && action.closeOnSuccess === false) { button.disabled = false; return; }
-      const nextMessage = succeeded ? action.successMessage : action.failureMessage;
+      if (!host.isConnected) return;
+      if (!succeeded) {
+        button.disabled = false;
+        detailElement.hidden = false;
+        detailElement.textContent = action.failureMessage ?? localized('操作未完成，请重试。', 'Could not complete the action. Try again.');
+        return;
+      }
+      if (action.closeOnSuccess === false) { button.disabled = false; return; }
       clearCurrent();
-      if (nextMessage) show(nextMessage, anchor, succeeded ? 'success' : 'error', [], { timeoutMs: 1800, presentation: 'toast', statusKind: options.statusKind });
+      if (action.successMessage) show(action.successMessage, anchor, 'success', [], { timeoutMs: 2400, value: options.value, highlight: true, presentation: 'toast', statusKind: options.statusKind });
     });
     actionsElement.append(button);
   }
   if (actions.length === 0) actionsElement.remove();
-  if (presentation === 'toast' || (actions.length === 0 && options.onDismiss === undefined && (options.timeoutMs ?? 0) > 0)) close.hidden = true;
-  document.body.append(host);
-  const updatePosition = () => position(host, anchor, presentation);
+  if (options.nonInteractive) close.hidden = true;
+  mountPageOverlay(host, anchor);
+  const highlight = document.createElement('div');
+  highlight.className = 'target-highlight';
+  highlight.setAttribute('aria-hidden', 'true');
+  if (options.highlight && anchor?.isConnected) shadow.prepend(highlight);
+  const highlightTimer = setTimeout(() => highlight.remove(), 1600);
+  const updatePosition = () => {
+    position(host, anchor);
+    if (highlight.isConnected && anchor?.isConnected) {
+      const rect = anchor.getBoundingClientRect();
+      Object.assign(highlight.style, { left: `${rect.left - 3}px`, top: `${rect.top - 3}px`, width: `${rect.width + 6}px`, height: `${rect.height + 6}px` });
+    }
+  };
   updatePosition();
   requestAnimationFrame(updatePosition);
   globalThis.addEventListener('scroll', updatePosition, true);
   globalThis.addEventListener('resize', updatePosition);
+  const resizeObserver = new ResizeObserver(updatePosition);
+  resizeObserver.observe(host);
   positionCleanup = () => {
+    resizeObserver.disconnect();
+    clearTimeout(highlightTimer);
     globalThis.removeEventListener('scroll', updatePosition, true);
     globalThis.removeEventListener('resize', updatePosition);
   };
@@ -321,25 +335,25 @@ export function showWorkflowStatus(
     : { ...(legacyConfirmOrOptions ?? {}), copyOutcome: legacyConfirmOrOptions?.copyOutcome ?? legacyCopyOutcome };
   const value = 'displayText' in result ? result.displayText || result.fillValue : '';
   if (result.state === 'filled') {
-    show(localized('已自动填入验证码', 'CAPTCHA filled automatically'), anchor, 'success', [], { timeoutMs: 1800, detail: value, presentation: 'toast', statusKind: 'workflow' });
+    show(localized('已自动填入验证码', 'CAPTCHA filled automatically'), anchor, 'success', [], { timeoutMs: 2600, value, highlight: true, detail: localized('已填入高亮的输入框，请检查后提交。', 'Filled the highlighted input. Review before submitting.'), presentation: 'toast', statusKind: 'workflow' });
     return;
   }
   if (result.state === 'needs_confirmation') {
-    const detail = result.fillValue === undefined ? localized('未得到可安全使用的结果', 'No safe result was produced') : value;
+    const detail = result.fillValue === undefined ? localized('未得到可安全使用的结果，请刷新验证码后重试。', 'No safe result was produced. Refresh the CAPTCHA and retry.') : result.reason === 'field_not_empty' ? localized('填入将替换输入框中的现有内容。', 'Filling will replace the current input value.') : localized('请核对图片中的内容，再选择填入或复制。', 'Check against the image, then choose Fill or Copy.');
     const confirmations = statusLocale === 'zh_CN' ? CONFIRMATION_MESSAGES : EN_CONFIRMATION_MESSAGES;
-    show(result.reason === undefined ? localized('结果需要确认', 'The result needs confirmation') : confirmations[result.reason], anchor, 'warning', options.actions, { detail, onDismiss: options.onDismiss, statusKind: 'workflow' });
+    show(result.reason === undefined ? localized('结果需要确认', 'The result needs confirmation') : confirmations[result.reason], anchor, 'warning', options.actions, { detail, value: result.fillValue === undefined ? undefined : value, highlight: true, onDismiss: options.onDismiss, statusKind: 'workflow' });
     return;
   }
   if (result.state === 'no_field') {
     const copyDetail = options.copyOutcome === 'copied' ? localized('已复制到剪贴板', 'Copied to the clipboard') : options.copyOutcome === 'failed' ? localized('自动复制失败', 'Automatic copy failed') : localized('未找到对应输入框', 'No matching input was found');
     const title = options.copyOutcome === 'copied' ? localized('识别完成并已复制', 'Recognized and copied') : options.actions?.length ? localized('识别完成，请选择操作', 'Recognition complete; choose an action') : localized('识别完成', 'Recognition complete');
     const presentation: StatusPresentation = options.copyOutcome === 'copied' && (options.actions?.length ?? 0) === 0 ? 'toast' : 'panel';
-    show(title, anchor, options.copyOutcome === 'failed' ? 'error' : options.copyOutcome === 'copied' ? 'success' : 'neutral', options.actions, { detail: `${value} · ${copyDetail}`, onDismiss: options.onDismiss, presentation, statusKind: 'workflow' });
+    show(title, anchor, options.copyOutcome === 'failed' ? 'error' : options.copyOutcome === 'copied' ? 'success' : 'neutral', options.actions, { value, detail: copyDetail, highlight: true, onDismiss: options.onDismiss, presentation, statusKind: 'workflow' });
     return;
   }
   if (result.state === 'permission_denied') {
     show(localized('需要允许读取验证码图片', 'Allow access to the CAPTCHA image'), anchor, 'warning', options.actions, {
-      detail: localized('这张图片受到跨域读取限制。请选择插件的使用范围，并在浏览器提示中确认授权。', 'This image is restricted by cross-origin access rules. Choose where the extension may run, then confirm browser access.'),
+      detail: localized('浏览器需要你的允许才能读取这张图片。请在授权提示中确认。', 'Your browser needs permission to read this image. Confirm access when prompted.'),
       onDismiss: options.onDismiss, statusKind: 'workflow',
     });
     return;
@@ -385,7 +399,7 @@ export function showSliderStatus(result: SliderRunResult | { state: 'running' })
   const warningStates: readonly SliderResultState[] = ['low-confidence', 'page-inactive', 'user-active', 'not-found', 'unsupported', 'uncertain'];
   const tone: StatusTone = state === 'running' ? 'running' : state === 'success' ? 'success' : warningStates.includes(state as SliderResultState) ? 'warning' : 'error';
   const timeoutMs = state === 'running' ? 0 : state === 'success' ? 2400 : state === 'permission-denied' ? 5000 : state === 'user-active' ? 0 : 4000;
-  const anchor = userActive ? visibleSliderTarget() : undefined;
+  const anchor = visibleSliderTarget();
   show(message, anchor, tone, [], { detail, timeoutMs, presentation: userActive ? 'panel' : 'toast', nonInteractive: userActive, statusKind: userActive ? 'slider-user-active' : 'slider' });
   if (userActive) highlightSlider();
 }

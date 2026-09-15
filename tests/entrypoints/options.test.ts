@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { startOptions, type OptionsBrowser } from '../../entrypoints/options/main';
 import { DEFAULT_SETTINGS, SETTINGS_STORAGE_KEY } from '../../src/platform/settings-store';
+import type { ModelStatusSnapshot } from '../../src/background/model-status';
 
 function harness() {
   const values = new Map<string, unknown>();
@@ -36,6 +37,41 @@ function harness() {
 }
 
 describe('options entrypoint', () => {
+  it('switches languages directly, retries a failed save, and preserves the current view and preferences', async () => {
+    const app = harness();
+    const saved = { ...DEFAULT_SETTINGS, autoFill: false, copyOnNoField: true, onboardingComplete: true, lastSeenUpgradeGuide: '1.3.3' };
+    app.values.set(SETTINGS_STORAGE_KEY, saved);
+    const save = vi.spyOn(app.extension.storage.local, 'set').mockRejectedValueOnce(new Error('Storage unavailable'));
+    await new Promise<void>((resolve) => {
+      window.addEventListener('hashchange', () => resolve(), { once: true });
+      location.hash = 'about';
+    });
+    const root = document.createElement('div');
+    document.body.append(root);
+    await startOptions(root, app.extension);
+    expect(root.querySelectorAll('[data-language]')).toHaveLength(2);
+    expect(root.querySelector('[data-language="zh_CN"]')?.getAttribute('aria-pressed')).toBe('true');
+    const english = root.querySelector<HTMLButtonElement>('[data-language="en"]')!;
+    english.focus();
+    english.click();
+    await vi.waitFor(() => expect(root.querySelector<HTMLElement>('.language-error')?.hidden).toBe(false));
+    expect(app.values.get(SETTINGS_STORAGE_KEY)).toEqual(saved);
+    expect(root.querySelector('[data-language="zh_CN"]')?.getAttribute('aria-pressed')).toBe('true');
+    expect(english.hasAttribute('aria-disabled')).toBe(false);
+
+    english.click();
+    await vi.waitFor(() => expect(root.querySelector('[data-language="en"]')?.getAttribute('aria-pressed')).toBe('true'));
+    expect(app.values.get(SETTINGS_STORAGE_KEY)).toEqual({ ...saved, interfaceLocale: 'en' });
+    expect(root.querySelector<HTMLElement>('[data-view="about"]')?.hidden).toBe(false);
+    expect(root.querySelector<HTMLElement>('.language-error')?.hidden).toBe(true);
+    expect(document.activeElement).toBe(root.querySelector('[data-language="en"]'));
+    expect(location.hash).toBe('#about');
+    expect(app.request).not.toHaveBeenCalled();
+    expect(save).toHaveBeenCalledTimes(2);
+    root.remove();
+    location.hash = '';
+  });
+
   it('keeps settings focused on static recognition when sliders are unavailable', async () => {
     const app = harness();
     app.extension.runtime.getManifest = () => ({ version: '1.0.0', permissions: [] });
@@ -58,7 +94,7 @@ describe('options entrypoint', () => {
     document.body.append(root);
     await startOptions(root, app.extension);
     expect(root.textContent).toContain('静态验证码');
-    expect(root.textContent).toContain('访问模式');
+    expect(root.textContent).toContain('在哪些网站运行');
     expect(root.querySelector('[data-mode="selected"]')?.getAttribute('aria-pressed')).toBe('true');
     (root.querySelector('[data-mode="all"]') as HTMLButtonElement).click();
     await vi.waitFor(() => expect(app.request).toHaveBeenCalledWith({ origins: ['http://*/*', 'https://*/*'] }));
@@ -68,6 +104,35 @@ describe('options entrypoint', () => {
     await vi.waitFor(() => expect(app.remove).toHaveBeenCalledWith({ origins: ['http://*/*', 'https://*/*'] }));
     expect(app.values.get(SETTINGS_STORAGE_KEY)).toMatchObject({ accessMode: 'selected' });
     root.remove();
+  });
+
+  it.each(['static', 'slider'] as const)('recovers missing all-sites access from %s settings after a denied request', async (view) => {
+    const app = harness();
+    const saved = { ...DEFAULT_SETTINGS, accessMode: 'all', sliderAccessMode: 'all' };
+    app.values.set(SETTINGS_STORAGE_KEY, saved);
+    app.request.mockResolvedValueOnce(false);
+    await new Promise<void>((resolve) => {
+      window.addEventListener('hashchange', () => resolve(), { once: true });
+      location.hash = view;
+    });
+    const root = document.createElement('div');
+    document.body.append(root);
+    await startOptions(root, app.extension);
+    const panel = () => root.querySelector(`[data-view="${view}"]`)!;
+    const grant = () => panel().querySelector<HTMLButtonElement>(`[data-grant-${view}]`)!;
+    expect(panel().querySelector('.access-state')?.getAttribute('data-granted')).toBe('false');
+    expect(app.request).not.toHaveBeenCalled();
+    grant().click();
+    await vi.waitFor(() => expect(panel().querySelector('.inline-status.error')?.textContent).toBe('未获得所有网站的访问权限，请重试。'));
+    expect(app.values.get(SETTINGS_STORAGE_KEY)).toEqual(saved);
+    app.contains.mockResolvedValue(true);
+    grant().click();
+    await vi.waitFor(() => expect(panel().querySelector('.access-state')?.getAttribute('data-granted')).toBe('true'));
+    expect(app.request).toHaveBeenCalledTimes(2);
+    expect(app.request).toHaveBeenLastCalledWith({ origins: ['http://*/*', 'https://*/*'] });
+    expect(grant()).toBeNull();
+    root.remove();
+    location.hash = '';
   });
 
   it('adds an exact authorized hostname through a direct permission gesture', async () => {
@@ -116,6 +181,38 @@ describe('options entrypoint', () => {
 
     root.remove();
     location.hash = '';
+  });
+
+  it('shows binding failures and copies the latest records with issue formatting and environment details', async () => {
+    const app = harness();
+    app.values.set(SETTINGS_STORAGE_KEY, { ...DEFAULT_SETTINGS, interfaceLocale: 'en' });
+    let latest: ModelStatusSnapshot = {
+      status: 'ready', progress: 100, message: 'ready',
+      logs: [{ at: 1000, kind: 'binding', outcome: 'failure', message: '未能选中绑定目标', site: 'example.test',
+        binding: { attemptId: 'abc123-def456', kind: 'text', step: 'field', event: 'rejected', reason: 'selector-unavailable', tag: 'input', attributes: ['class'], closestMatchCount: 2 } }],
+    };
+    app.sendMessage.mockImplementation(async () => latest);
+    const writeText = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue(undefined);
+    location.hash = 'diagnostics';
+    const root = document.createElement('div');
+    document.body.append(root);
+    try {
+      await startOptions(root, app.extension);
+      expect(root.querySelector('.diagnostic-stream')!.textContent).toContain('Binding target could not be selected');
+      expect(root.querySelector('.diagnostic-stream')!.textContent).toContain('reason=selector-unavailable');
+      latest = { ...latest, logs: [...latest.logs, { at: 1100, kind: 'binding', outcome: 'success', message: '手动绑定已保存', binding: { attemptId: 'abc123-def456', kind: 'text', step: 'confirm', event: 'saved' } }] };
+      const button = root.querySelector<HTMLButtonElement>('[data-copy-diagnostics]')!;
+      button.click();
+      await vi.waitFor(() => expect(writeText).toHaveBeenCalledOnce());
+      const report = writeText.mock.calls[0]![0];
+      expect(report).toMatch(/^```json\n[\s\S]+\n```$/);
+      expect(JSON.parse(report.slice(8, -4))).toEqual({ extensionVersion: '1.0.0', browser: navigator.userAgent, interfaceLocale: 'en', ...latest });
+      await vi.waitFor(() => expect(button.textContent).toBe('Copied'));
+      writeText.mockRejectedValueOnce(new Error('Clipboard unavailable'));
+      button.click();
+      await vi.waitFor(() => expect(button.textContent).toBe('Copy failed'));
+      expect(button.disabled).toBe(false);
+    } finally { writeText.mockRestore(); root.remove(); location.hash = ''; }
   });
 
   it('shows slider result and drag geometry in local diagnostics', async () => {
@@ -219,11 +316,20 @@ describe('options entrypoint', () => {
     const root = document.createElement('div');
     document.body.append(root);
     await startOptions(root, app.extension);
-    expect(root.textContent).toContain('网站类型覆盖');
+    expect(root.textContent).toContain('为网站指定验证码类型');
     expect(root.textContent).toContain('portal.example.test');
     expect(root.textContent).toContain('纯英文');
+    const disclosure = root.querySelector<HTMLDetailsElement>('#static-types')!;
+    expect(disclosure.open).toBe(false);
+    disclosure.open = true;
     (root.querySelector('[data-restore-mode]') as HTMLButtonElement).click();
     await vi.waitFor(() => expect(app.values.get(SETTINGS_STORAGE_KEY)).toMatchObject({ siteRecognitionModes: [] }));
+    await vi.waitFor(() => expect(root.querySelector('[data-restore-mode]')).toBeNull());
+    expect(root.querySelector<HTMLDetailsElement>('#static-types')?.open).toBe(true);
+    (root.querySelector<HTMLButtonElement>('[data-language="en"]'))!.click();
+    await vi.waitFor(() => expect(root.querySelector('[data-language="en"]')?.getAttribute('aria-pressed')).toBe('true'));
+    expect(root.querySelector<HTMLDetailsElement>('#static-types')?.open).toBe(true);
+    expect(root.querySelector('#static-types')?.textContent).toContain('Every site uses automatic detection.');
     root.remove();
     location.hash = '';
   });
@@ -235,7 +341,7 @@ describe('options entrypoint', () => {
     const root = document.createElement('div');
     document.body.append(root);
     await startOptions(root, app.extension);
-    expect(root.textContent).toContain('拼图滑块处理');
+    expect(root.textContent).toContain('拼图滑块验证码');
     expect(root.querySelector('[data-slider-mode="selected"]')?.getAttribute('aria-pressed')).toBe('true');
     (root.querySelector('[data-slider-mode="all"]') as HTMLButtonElement).click();
     await vi.waitFor(() => expect(app.request).toHaveBeenCalledWith({ origins: ['http://*/*', 'https://*/*'] }));
@@ -246,19 +352,28 @@ describe('options entrypoint', () => {
     location.hash = '';
   });
 
-  it('opens the standalone slider upgrade guide from Settings without resetting OCR onboarding', async () => {
+  it.each([true, false])('opens the requested guide while preserving preferences (slider support: %s)', async (sliderSupported) => {
     const app = harness();
-    app.values.set(SETTINGS_STORAGE_KEY, { ...DEFAULT_SETTINGS, onboardingComplete: true });
+    app.extension.runtime.getManifest = () => ({ version: '1.4.0', permissions: sliderSupported ? ['debugger'] : [] });
+    const settings = { ...DEFAULT_SETTINGS, autoFill: false, copyOnNoField: true, onboardingComplete: true, lastSeenUpgradeGuide: '1.3.3' };
+    app.values.set(SETTINGS_STORAGE_KEY, settings);
     const navigate = vi.fn();
     const createTab = vi.fn(async () => undefined);
     app.extension.tabs = { create: createTab };
     const root = document.createElement('div');
     document.body.append(root);
     await startOptions(root, app.extension, navigate);
-    (root.querySelector('[data-open-guide]') as HTMLButtonElement).click();
-    expect(createTab).toHaveBeenCalledWith({ url: 'chrome-extension://test/onboarding.html?flow=upgrade&version=1.0.0&manual=1' });
+    (root.querySelector('[data-open-guide="welcome"]') as HTMLButtonElement).click();
+    expect(createTab).toHaveBeenCalledWith({ url: 'chrome-extension://test/onboarding.html?flow=welcome' });
+    if (sliderSupported) {
+      (root.querySelector('[data-open-guide="slider"]') as HTMLButtonElement).click();
+      expect(createTab).toHaveBeenLastCalledWith({ url: 'chrome-extension://test/onboarding.html?flow=slider' });
+    } else {
+      expect(root.querySelector('[data-open-guide="slider"]')).toBeNull();
+    }
     expect(navigate).not.toHaveBeenCalled();
-    expect(app.values.get(SETTINGS_STORAGE_KEY)).toMatchObject({ onboardingComplete: true });
+    expect(app.request).not.toHaveBeenCalled();
+    expect(app.values.get(SETTINGS_STORAGE_KEY)).toEqual(settings);
     root.remove();
   });
 

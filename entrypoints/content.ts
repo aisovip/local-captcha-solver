@@ -13,11 +13,15 @@ import { isInterfaceLocale, isRecognitionShortcut, recognitionModeFromSettings, 
 import { resolveUiLocale, type UiLocale } from '../src/platform/i18n';
 import { discoverSliderChallenge, observeSliderOutcome, sliderDiscoveryKey, visibleSliderInteractionTarget } from '../src/slider/challenge-discovery';
 import { SLIDER_RESULT_STATES, type SliderResultState, type SliderRunResult } from '../src/slider/types';
+import { BINDINGS_STORAGE_KEY, bindingScope, isBindingKind, parseBindings, type CaptchaBinding } from '../src/platform/binding-store';
+import { pageBinding, resolveBindingElement, resolveSliderBinding, resolveTextBinding } from '../src/content/binding-targets';
+import { startBindingPicker } from '../src/content/binding-picker';
 
 type Runtime = {
   sendMessage(message: unknown): Promise<unknown>;
   onMessage: { addListener(listener: RuntimeMessageListener): void };
   settings?: { read(): Promise<unknown>; subscribe(listener: (settings: unknown) => void): () => void };
+  bindings?: { read(): Promise<unknown>; subscribe(listener: (bindings: unknown) => void): () => void };
   uiLanguage?: string;
 };
 function isOcrResults(value: unknown): value is readonly OcrResult[] { return Array.isArray(value) && value.every((item) => item && typeof item === 'object' && typeof (item as OcrResult).text === 'string' && typeof (item as OcrResult).confidence === 'number' && typeof (item as OcrResult).mode === 'string'); }
@@ -74,6 +78,17 @@ function imageSourceSummary(image: HTMLImageElement): string {
   } catch { return '页面图片'; }
 }
 export function createRuntimeContent(runtime: Runtime) {
+  let bindings: CaptchaBinding[] = [];
+  let bindingsReady = runtime.bindings === undefined;
+  let loadBindings = Promise.resolve();
+  let bindingPicker: (() => void) | undefined;
+  let unsubscribeBindings: (() => void) | undefined;
+  const textBinding = () => pageBinding(bindings, 'text');
+  const sliderElements = () => {
+    const binding = pageBinding(bindings, 'slider');
+    return binding ? resolveSliderBinding(binding) ?? null : undefined;
+  };
+  const discoverSlider = () => discoverSliderChallenge(document, sliderElements());
   let autoFillEnabled = true;
   let recognitionModes = AUTOMATIC_MODES;
   let imageAccess: { requestId: string; image: HTMLImageElement; revision: string; imageOrigin: string } | undefined;
@@ -104,6 +119,11 @@ export function createRuntimeContent(runtime: Runtime) {
     },
     recognitionModes: () => recognitionModes,
     autoFillEnabled: () => autoFillEnabled,
+    boundField: (image) => {
+      const binding = textBinding();
+      if (!binding || resolveBindingElement(binding.image) !== image) return undefined;
+      return resolveTextBinding(binding)?.field ?? null;
+    },
   });
   let automaticEnabled = false;
   let lifecycleGeneration = 0;
@@ -171,7 +191,10 @@ export function createRuntimeContent(runtime: Runtime) {
       const token = (statusTokens.get(args[0]) ?? 0) + 1;
       statusTokens.set(args[0], token);
       const snapshot = snapshotForImage(args[0]);
-      const shouldShow = args[1] !== 'automatic' || (snapshot !== undefined && scoreCaptchaCandidate(snapshot.candidate.candidate).score >= AUTOMATIC_CANDIDATE_THRESHOLD);
+      const binding = textBinding();
+      const shouldShow = args[1] !== 'automatic'
+        || (binding !== undefined && resolveTextBinding(binding)?.image === args[0])
+        || (snapshot !== undefined && scoreCaptchaCandidate(snapshot.candidate.candidate).score >= AUTOMATIC_CANDIDATE_THRESHOLD);
       const isCurrentStatus = () => shouldShow && lifecycleGeneration === generation && statusTokens.get(args[0]) === token && (args[1] !== 'automatic' || automaticEnabled);
       if (shouldShow) {
         let preparing = false;
@@ -330,6 +353,7 @@ export function createRuntimeContent(runtime: Runtime) {
     return image instanceof HTMLImageElement && isVisible(image) ? image : undefined;
   };
   const onShortcutDown = (event: Event): void => {
+    if (bindingPicker) return;
     const image = shortcutImage(event);
     if (image === undefined) return;
     event.preventDefault();
@@ -345,7 +369,8 @@ export function createRuntimeContent(runtime: Runtime) {
     lastUserInputAt = at;
     const target = event.target;
     const targetElement = target instanceof Element ? target : undefined;
-    const sliderTarget = visibleSliderInteractionTarget(document);
+    const boundSlider = sliderElements();
+    const sliderTarget = boundSlider === undefined ? visibleSliderInteractionTarget(document) : boundSlider?.handle;
     const isSliderControl = targetElement !== undefined && sliderTarget !== undefined && (sliderTarget === targetElement || sliderTarget.contains(targetElement));
     if (event.type === 'pointerdown' && isSliderControl && at <= automationPointerPressArmedUntil) {
       automationPointerPressArmedUntil = 0;
@@ -381,6 +406,8 @@ export function createRuntimeContent(runtime: Runtime) {
   window.addEventListener('keydown', noteUserInput, true);
   window.addEventListener('wheel', noteUserInput, true);
   documentWithShortcut.__localCaptchaShortcutCleanup = () => {
+    bindingPicker?.();
+    unsubscribeBindings?.();
     sliderGeneration += 1;
     window.removeEventListener('mousedown', onShortcutDown, true);
     window.removeEventListener('click', suppressShortcutDefault, true);
@@ -402,9 +429,14 @@ export function createRuntimeContent(runtime: Runtime) {
     unsubscribeSettings?.();
   };
   const enable = () => {
-    lifecycleGeneration += 1;
+    if (!automaticEnabled) lifecycleGeneration += 1;
     automaticEnabled = true;
+    if (!bindingsReady || bindingPicker) return;
     observer ??= observeCaptchaImages(displayed, document, {
+      boundImage: () => {
+        const binding = textBinding();
+        return binding ? resolveTextBinding(binding)?.image ?? null : undefined;
+      },
       onSkip: (skip) => { void Promise.resolve(runtime.sendMessage({ type: 'captcha:record-activity', outcome: 'skipped', diagnostic: { trigger: 'automatic', ...skip } })).catch(() => undefined); },
     });
   };
@@ -420,6 +452,58 @@ export function createRuntimeContent(runtime: Runtime) {
     if (!message || typeof message !== 'object') return undefined;
     const type = (message as { type?: string }).type;
     if (type === 'captcha:ping') return Promise.resolve({ ok: true });
+    if (type === 'captcha:begin-binding') {
+      return loadBindings.then(async () => {
+        const kind = (message as { kind?: unknown }).kind;
+        if (!isBindingKind(kind) || (message as { scope?: unknown }).scope !== bindingScope(location.href) || sliderRunGeneration !== undefined || !bindingsReady) return Promise.resolve({ started: false });
+        await runtime.sendMessage({ type: 'captcha:cancel-slider' }).catch(() => undefined);
+        bindingPicker?.();
+        observer?.disconnect();
+        observer = undefined;
+        workflow.cancelAll?.();
+        lifecycleGeneration += 1;
+        sliderGeneration += 1;
+        clearWorkflowStatus();
+        clearSliderStatus();
+        bindingPicker = startBindingPicker({
+          kind, locale: uiLocale,
+          record: (diagnostic) => { void runtime.sendMessage({ type: 'captcha:record-binding', diagnostic }).catch(() => undefined); },
+          validate: async (binding) => binding.kind === 'text'
+            ? resolveTextBinding(binding) !== undefined
+            : (await discoverSliderChallenge(document, resolveSliderBinding(binding) ?? null)).state === 'ready',
+          save: async (binding) => {
+            const result = await runtime.sendMessage({ type: 'captcha:save-binding', binding });
+            if (typeof result !== 'object' || result === null || (result as { ok?: unknown }).ok !== true) throw new Error('Binding save failed');
+          },
+          onFinish: (binding) => {
+            bindingPicker = undefined;
+            if (binding) bindings = [...bindings.filter((item) => item.scope !== binding.scope || item.kind !== binding.kind), binding];
+            lastSliderAttempt = undefined;
+            observedSliderCandidate = undefined;
+            settledSliderChallenge = undefined;
+            if (binding?.kind === 'text') {
+              const target = resolveTextBinding(binding);
+              if (target) void displayed.run(target.image, 'explicit');
+            }
+            if (automaticEnabled) enable();
+            if (binding?.kind === 'slider' && !sliderAutomaticEnabled) {
+              const generation = sliderGeneration;
+              setTimeout(() => {
+                if (generation !== sliderGeneration || bindingPicker || binding.scope !== bindingScope(location.href)) return;
+                void runtime.sendMessage({ type: 'captcha:run-bound-slider' }).then((result) => {
+                  if (generation === sliderGeneration && !bindingPicker && isSliderRunResult(result)) showSliderStatus(result);
+                }).catch(() => showSliderStatus({ state: 'failed' }));
+              }, SLIDER_USER_INPUT_COOLDOWN_MS);
+            }
+            scheduleSliderScan();
+          },
+        });
+        return Promise.resolve({ started: true });
+      });
+    }
+    if (type === 'captcha:binding-status') {
+      return Promise.resolve({ text: textBinding() ? resolveTextBinding(textBinding()!) ? 'ready' : 'waiting' : 'none', slider: pageBinding(bindings, 'slider') ? sliderElements() ? 'ready' : 'waiting' : 'none' });
+    }
     if (type === 'captcha:get-image-access') {
       return Promise.resolve(imageAccess !== undefined && imageAccess.image.isConnected && imageRevision(imageAccess.image) === imageAccess.revision
         ? { requestId: imageAccess.requestId, imageOrigin: imageAccess.imageOrigin }
@@ -436,7 +520,25 @@ export function createRuntimeContent(runtime: Runtime) {
     if (type === 'captcha:auto-enable') { enable(); return Promise.resolve({ enabled: true }); }
     if (type === 'captcha:auto-disable') { disable(); return Promise.resolve({ enabled: false }); }
     if (type === 'captcha:scan') { enable(); return Promise.resolve({ queued: true }); }
+    if (type === 'captcha:page-context') {
+      return loadBindings.then(async () => {
+        const slider = await discoverSlider();
+        if (slider.state === 'ready' || slider.state === 'activatable') return { kind: 'slider' };
+        const binding = textBinding();
+        const found = binding ? resolveTextBinding(binding) !== undefined : snapshotImages(document).some((item) => scoreCaptchaCandidate(item.candidate).score >= AUTOMATIC_CANDIDATE_THRESHOLD);
+        return { kind: found ? 'text' : 'none' };
+      });
+    }
     if (type === 'captcha:recognize-page') {
+      if (bindingPicker || !bindingsReady) return Promise.resolve({ state: 'stale' });
+      const binding = textBinding();
+      if (binding) {
+        const target = resolveTextBinding(binding);
+        if (target) return displayed.run(target.image, 'explicit');
+        const result = { state: 'no_candidate' as const };
+        showWorkflowStatus(result);
+        return Promise.resolve(result);
+      }
       const best = snapshotImages(document)
         .map((snapshot, order) => ({ snapshot, order, score: scoreCaptchaCandidate(snapshot.candidate).score }))
         .filter((candidate) => candidate.score >= AUTOMATIC_CANDIDATE_THRESHOLD - 20)
@@ -450,18 +552,19 @@ export function createRuntimeContent(runtime: Runtime) {
       return displayed.run(best.snapshot.element, 'explicit');
     }
     if (type === 'captcha:slider-discover') {
-      return discoverSliderChallenge(document).then((discovery) => {
+      if (bindingPicker || !bindingsReady) return Promise.resolve({ state: 'not-found' });
+      return discoverSlider().then((discovery) => {
         if (discovery.state !== 'ready' && discovery.state !== 'activatable') return discovery;
         return { ...discovery, recentUserInput: Date.now() - lastUserInputAt < SLIDER_USER_INPUT_COOLDOWN_MS, pageVisible: document.visibilityState === 'visible', pageFocused: document.hasFocus() };
       });
     }
     if (type === 'captcha:slider-presence') {
-      return discoverSliderChallenge(document).then((discovery) => ({ present: discovery.state === 'ready' || discovery.state === 'activatable' }));
+      return discoverSlider().then((discovery) => ({ present: discovery.state === 'ready' || discovery.state === 'activatable' }));
     }
     if (type === 'captcha:slider-outcome') {
       const revision = (message as { revision?: unknown }).revision;
       return typeof revision === 'string'
-        ? observeSliderOutcome(revision, document).then((outcome) => ({ outcome }))
+        ? observeSliderOutcome(revision, document, sliderElements()).then((outcome) => ({ outcome }))
         : Promise.resolve({ outcome: 'uncertain' });
     }
     if (type === 'captcha:slider-user-active') return Promise.resolve({ active: Date.now() - lastUserInputAt < SLIDER_USER_INPUT_COOLDOWN_MS });
@@ -481,14 +584,14 @@ export function createRuntimeContent(runtime: Runtime) {
   void Promise.resolve(runtime.sendMessage({ type: 'captcha:get-site-state' })).then((state) => { if (isSiteState(state) && state.enabled && lifecycleGeneration === initialGeneration) enable(); }).catch(() => undefined);
   const scanSlider = async (): Promise<void> => {
     sliderTimer = undefined;
-    if (!sliderAutomaticEnabled || sliderRunGeneration !== undefined || document.visibilityState !== 'visible' || !document.hasFocus()) return;
+    if (!sliderAutomaticEnabled || bindingPicker || !bindingsReady || sliderRunGeneration !== undefined || document.visibilityState !== 'visible' || !document.hasFocus()) return;
     const generation = sliderGeneration;
     const userCooldown = SLIDER_USER_INPUT_COOLDOWN_MS - (Date.now() - lastUserInputAt);
     if (userCooldown > 0) {
       sliderTimer = setTimeout(() => { void scanSlider(); }, userCooldown);
       return;
     }
-    const discovery = await discoverSliderChallenge(document);
+    const discovery = await discoverSlider();
     if (generation !== sliderGeneration || !sliderAutomaticEnabled) return;
     if (document.visibilityState !== 'visible' || !document.hasFocus()) return;
     const cooldownAfterDiscovery = SLIDER_USER_INPUT_COOLDOWN_MS - (Date.now() - lastUserInputAt);
@@ -556,14 +659,37 @@ export function createRuntimeContent(runtime: Runtime) {
     sliderTimer = setTimeout(() => { void scanSlider(); }, 250);
   }
   const startSliderObserver = (): void => {
-    if (!sliderAutomaticEnabled || sliderObserver !== undefined) return;
+    if (!sliderAutomaticEnabled || !bindingsReady || sliderObserver !== undefined) return;
     sliderObserver = new MutationObserver(scheduleSliderScan);
-    sliderObserver.observe(document.documentElement, { subtree: true, childList: true, attributes: true, attributeFilter: ['class', 'style', 'hidden', 'src'] });
+    sliderObserver.observe(document.documentElement, { subtree: true, childList: true, attributes: true, attributeFilter: ['class', 'style', 'hidden', 'open', 'src'] });
     scheduleSliderScan();
   };
   window.addEventListener('focus', scheduleSliderScan);
   document.addEventListener('visibilitychange', scheduleSliderScan);
   startSliderObserver();
+  let bindingReadGeneration = 0;
+  const updateBindings = (value: unknown) => {
+    const next = parseBindings(value);
+    if (bindingsReady && JSON.stringify(next) === JSON.stringify(bindings)) return;
+    if (bindingsReady) lifecycleGeneration += 1;
+    bindings = next;
+    bindingsReady = true;
+    sliderGeneration += 1;
+    workflow.cancelAll?.();
+    observer?.disconnect();
+    observer = undefined;
+    lastSliderAttempt = undefined;
+    observedSliderCandidate = undefined;
+    settledSliderChallenge = undefined;
+    if (automaticEnabled) enable();
+    startSliderObserver();
+    scheduleSliderScan();
+  };
+  if (runtime.bindings) {
+    const generation = bindingReadGeneration;
+    loadBindings = runtime.bindings.read().then((value) => { if (bindingReadGeneration === generation) updateBindings(value); }).catch(() => undefined);
+    unsubscribeBindings = runtime.bindings.subscribe((value) => { bindingReadGeneration += 1; updateBindings(value); });
+  }
   return { workflow: displayed, enable, disable };
 }
 
@@ -576,6 +702,16 @@ export default defineContentScript({ matches: [], registration: 'runtime', main(
     sendMessage: (message) => sendRuntimeMessage(runtime, message),
     onMessage: runtime.onMessage,
     uiLanguage: browser.i18n.getUILanguage(),
+    bindings: {
+      async read() { return (await browser.storage.local.get(BINDINGS_STORAGE_KEY))[BINDINGS_STORAGE_KEY]; },
+      subscribe(listener) {
+        const handle = (changes: Record<string, { newValue?: unknown }>, areaName: string) => {
+          if (areaName === 'local' && Object.hasOwn(changes, BINDINGS_STORAGE_KEY)) listener(changes[BINDINGS_STORAGE_KEY]?.newValue);
+        };
+        browser.storage.onChanged.addListener(handle);
+        return () => browser.storage.onChanged.removeListener(handle);
+      },
+    },
     settings: {
       async read() { return (await browser.storage.local.get(SETTINGS_STORAGE_KEY))[SETTINGS_STORAGE_KEY]; },
       subscribe(listener) {

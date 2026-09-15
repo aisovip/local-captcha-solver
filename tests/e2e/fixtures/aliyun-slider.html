@@ -124,6 +124,26 @@
           piece.style.left = '0px';
         }
       });
+      if (new URLSearchParams(location.search).has('binding')) {
+        const names = ['challenge', 'picture-box', 'scene', 'piece', 'rail', 'knob', 'instruction', 'outcome'];
+        const elements = [...document.querySelectorAll('[id^="aliyunCaptcha-"]')];
+        const style = document.querySelector('style');
+        elements.forEach((element, index) => {
+          style.textContent = style.textContent.replaceAll(`#${element.id}`, `#${names[index]}`);
+          element.id = names[index];
+          element.className = '';
+          element.removeAttribute('aria-label');
+        });
+        const dialog = document.createElement('dialog');
+        dialog.id = 'dialog';
+        dialog.style.cssText = 'padding:28px;border:1px solid #bbc9be;border-radius:12px';
+        dialog.append(document.querySelector('#challenge'), status);
+        const open = document.createElement('button');
+        open.id = 'open';
+        open.textContent = 'Log in';
+        open.addEventListener('click', () => dialog.showModal());
+        document.querySelector('main').append(open, dialog);
+      }
     </script>
   </body>
 </html>

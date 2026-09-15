@@ -9,6 +9,8 @@ import type { RecognitionMode } from '../core/types';
 import type { EnableRegistrationOptions } from './content-registration';
 import type { DiagnosticContext, ModelStatusStore, WorkflowActivity, WorkflowActivityOutcome } from './model-status';
 import type { SliderActivity, SliderRunResult, SliderSolver } from '../slider/types';
+import { bindingScope, isBindingKind, normalizeBinding, type BindingStore } from '../platform/binding-store';
+import { parseBindingDiagnostic } from '../platform/binding-diagnostics';
 
 export interface RuntimeSender { tab?: { id?: number; url?: string; windowId?: number }; url?: string; frameId?: number; }
 export interface RuntimeRouterAdapter {
@@ -28,6 +30,7 @@ export interface RuntimeRouterAdapter {
   settings?: Pick<SettingsStore, 'read' | 'setCopyOnNoField' | 'setAutoFill' | 'setRecognitionShortcut'> &
     Partial<Pick<SettingsStore, 'isSliderEnabled' | 'setSliderEnabled'>>;
   sliderSolver?: SliderSolver;
+  bindings?: BindingStore;
   activeTab(): Promise<{ id?: number; url?: string; windowId?: number } | undefined>;
 }
 
@@ -213,7 +216,31 @@ export function createRuntimeRouter(adapter: RuntimeRouterAdapter): RuntimeRoute
   return {
     async handle(message: unknown, sender: RuntimeSender): Promise<unknown | undefined> {
       if (message === null || typeof message !== 'object' || !('type' in message)) return undefined;
-      const request = message as { type?: unknown; area?: unknown; tabId?: unknown; pageUrl?: unknown; requestId?: unknown; scope?: unknown; url?: unknown; imageDataUrl?: unknown; revision?: unknown; modes?: unknown; enabled?: unknown; hostname?: unknown; permissionAlreadyGranted?: unknown; copyOnNoField?: unknown; autoFill?: unknown; recognitionShortcut?: unknown; outcome?: unknown; diagnostic?: unknown; trigger?: unknown };
+      const request = message as { type?: unknown; area?: unknown; tabId?: unknown; pageUrl?: unknown; requestId?: unknown; scope?: unknown; url?: unknown; imageDataUrl?: unknown; revision?: unknown; modes?: unknown; enabled?: unknown; hostname?: unknown; permissionAlreadyGranted?: unknown; copyOnNoField?: unknown; autoFill?: unknown; recognitionShortcut?: unknown; outcome?: unknown; diagnostic?: unknown; trigger?: unknown; binding?: unknown; kind?: unknown };
+      if (request.type === 'captcha:cancel-slider') {
+        if (senderPage(sender) === undefined || sender.tab?.id === undefined || (sender.frameId ?? 0) !== 0) return { cancelled: false };
+        adapter.sliderSolver?.cancel?.(sender.tab.id);
+        return { cancelled: true };
+      }
+      if (request.type === 'captcha:get-bindings' || request.type === 'captcha:save-binding' || request.type === 'captcha:remove-binding') {
+        const page = await currentPage(sender);
+        if (page === undefined || adapter.bindings === undefined || (sender.frameId ?? 0) !== 0) return { ok: false };
+        try {
+          const scope = bindingScope(page);
+          if (request.type === 'captcha:get-bindings') return { ok: true, scope, bindings: (await adapter.bindings.read()).filter((binding) => binding.scope === scope) };
+          if (request.type === 'captcha:remove-binding') {
+            if (!canManageDiagnostics(sender) || request.scope !== scope || !isBindingKind(request.kind)) return { ok: false };
+            await adapter.bindings.remove(scope, request.kind);
+          } else {
+            const binding = normalizeBinding(request.binding);
+            if (senderPage(sender) === undefined || sender.tab?.url === undefined || binding.scope !== scope || bindingScope(sender.tab.url) !== scope) return { ok: false };
+            if (!await adapter.permissions.contains({ origins: [permissionOriginForPage(page)!] })) return { ok: false };
+            if (binding.kind === 'slider' && adapter.sliderSolver === undefined) return { ok: false };
+            await adapter.bindings.save(binding);
+          }
+          return { ok: true };
+        } catch { return { ok: false }; }
+      }
       if (request.type === 'captcha:get-slider-state') {
         if (!canManageDiagnostics(sender) || adapter.sliderSolver === undefined) return { supported: false, enabled: false, debuggerGranted: false };
         const tab = await adapter.activeTab();
@@ -241,10 +268,16 @@ export function createRuntimeRouter(adapter: RuntimeRouterAdapter): RuntimeRoute
           return { supported: true, enabled: request.enabled, debuggerGranted, hostname };
         } catch { return { supported: false, enabled: false, debuggerGranted: false, reason: 'invalid-request' }; }
       }
-      if (request.type === 'captcha:run-slider') {
-        if (!canManageDiagnostics(sender) || adapter.sliderSolver === undefined) return { state: 'permission-denied', reason: 'untrusted-sender' };
+      if (request.type === 'captcha:run-slider' || request.type === 'captcha:run-bound-slider') {
+        const boundRequest = request.type === 'captcha:run-bound-slider';
+        if ((!boundRequest && !canManageDiagnostics(sender)) || adapter.sliderSolver === undefined) return { state: 'permission-denied', reason: 'untrusted-sender' };
         const tab = await adapter.activeTab();
         if (typeof tab?.id !== 'number' || typeof tab.url !== 'string') return { state: 'unsupported' };
+        if (boundRequest) {
+          const page = senderPage(sender);
+          if (page === undefined || sender.tab?.id !== tab.id || (sender.frameId ?? 0) !== 0 || bindingScope(page) !== bindingScope(tab.url) ||
+            !(await adapter.bindings?.read())?.some((binding) => binding.kind === 'slider' && binding.scope === bindingScope(page))) return { state: 'permission-denied', reason: 'untrusted-sender' };
+        }
         const pageOriginPermission = permissionOriginForPage(tab.url);
         if (pageOriginPermission === undefined || !await adapter.permissions.contains({ origins: [pageOriginPermission] })) return { state: 'permission-denied', reason: 'site-access-not-granted' };
         const currentTab = await adapter.activeTab();
@@ -334,6 +367,13 @@ export function createRuntimeRouter(adapter: RuntimeRouterAdapter): RuntimeRoute
           adapter.modelStatus.recognitionFailed(error instanceof Error ? error.message : 'recognition failed', durationMs, modelUnavailable, context);
           return recognitionError(error);
         }
+      }
+      if (request.type === 'captcha:record-binding') {
+        const page = senderPage(sender);
+        const diagnostic = parseBindingDiagnostic(request.diagnostic);
+        if (page === undefined || (sender.frameId ?? 0) !== 0 || !diagnostic) return { recorded: false };
+        adapter.modelStatus.bindingRecorded(diagnostic, hostnameForPage(page));
+        return { recorded: true };
       }
       if (request.type === 'captcha:record-activity') {
         const page = senderPage(sender);

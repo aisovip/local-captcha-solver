@@ -1,10 +1,12 @@
 import { SLIDER_RESULT_STATES, type SliderDiagnosticPhase, type SliderImageSource, type SliderLocalizationMethod, type SliderProvider, type SliderResultState, type SliderRunDiagnostic } from '../slider/types';
+import { bindingDiagnosticMessage, parseBindingDiagnostic, type BindingDiagnostic } from '../platform/binding-diagnostics';
 
 export type ModelStatus = 'loading' | 'ready' | 'error';
 export type DiagnosticTrigger = 'automatic' | 'manual' | 'explicit' | 'context';
 export type DiagnosticFieldMatch = 'unique' | 'ambiguous' | 'none';
 
 export interface DiagnosticContext extends SliderRunDiagnostic {
+  readonly binding?: BindingDiagnostic;
   readonly site?: string;
   readonly trigger?: DiagnosticTrigger;
   readonly candidateId?: string;
@@ -23,7 +25,7 @@ export interface DiagnosticContext extends SliderRunDiagnostic {
 
 export interface ModelLog extends DiagnosticContext {
   readonly at: number;
-  readonly kind: 'warmup' | 'recognition' | 'workflow' | 'slider';
+  readonly kind: 'warmup' | 'recognition' | 'workflow' | 'slider' | 'binding';
   readonly outcome: 'started' | 'success' | 'failure' | 'skipped';
   readonly message: string;
   readonly durationMs?: number;
@@ -67,6 +69,7 @@ export interface ModelStatusStore {
   recognitionFailed(message: string, durationMs: number, modelUnavailable: boolean, context?: DiagnosticContext): void;
   workflowCompleted(activity: WorkflowActivityOutcome | WorkflowActivity): void;
   sliderCompleted(activity: SliderDiagnosticActivity): void;
+  bindingRecorded(activity: BindingDiagnostic, site?: string): void;
 }
 
 type Listener = (snapshot: ModelStatusSnapshot) => void;
@@ -113,6 +116,7 @@ function cleanSite(value: unknown): string | undefined {
 }
 
 function sanitizeContext(context: DiagnosticContext = {}): DiagnosticContext {
+  const binding = parseBindingDiagnostic(context.binding);
   const trigger = context.trigger === 'automatic' || context.trigger === 'manual' || context.trigger === 'explicit' || context.trigger === 'context' ? context.trigger : undefined;
   const match = context.match === 'unique' || context.match === 'ambiguous' || context.match === 'none' ? context.match : undefined;
   const provider: SliderProvider | undefined = context.provider === 'aliyun' || context.provider === 'geetest' || context.provider === 'geetest-v4' || context.provider === 'generic' ? context.provider : undefined;
@@ -138,6 +142,7 @@ function sanitizeContext(context: DiagnosticContext = {}): DiagnosticContext {
   const error = cleanText(context.error);
   const outcomeSequence = cleanText(context.outcomeSequence, 120);
   return {
+    ...(binding === undefined ? {} : { binding }),
     ...(site === undefined ? {} : { site }),
     ...(trigger === undefined ? {} : { trigger }),
     ...(candidateId === undefined ? {} : { candidateId }),
@@ -189,10 +194,12 @@ function sanitizeContext(context: DiagnosticContext = {}): DiagnosticContext {
 function parseLog(value: unknown): ModelLog | undefined {
   if (typeof value !== 'object' || value === null) return undefined;
   const candidate = value as Partial<ModelLog>;
-  const kind = candidate.kind === 'warmup' || candidate.kind === 'recognition' || candidate.kind === 'workflow' || candidate.kind === 'slider' ? candidate.kind : undefined;
+  const kind = candidate.kind === 'warmup' || candidate.kind === 'recognition' || candidate.kind === 'workflow' || candidate.kind === 'slider' || candidate.kind === 'binding' ? candidate.kind : undefined;
   const outcome = candidate.outcome === 'started' || candidate.outcome === 'success' || candidate.outcome === 'failure' || candidate.outcome === 'skipped' ? candidate.outcome : undefined;
   const at = finiteNumber(candidate.at, 0, Number.MAX_SAFE_INTEGER);
-  const message = cleanText(candidate.message, 160);
+  const binding = parseBindingDiagnostic(candidate.binding);
+  if (kind === 'binding' && !binding) return undefined;
+  const message = kind === 'binding' ? bindingDiagnosticMessage(binding!) : cleanText(candidate.message, 160);
   if (kind === undefined || outcome === undefined || at === undefined || message === undefined) return undefined;
   const durationMs = finiteNumber(candidate.durationMs, 0, 3_600_000);
   return {
@@ -201,7 +208,7 @@ function parseLog(value: unknown): ModelLog | undefined {
     outcome,
     message,
     ...(durationMs === undefined ? {} : { durationMs }),
-    ...sanitizeContext(candidate),
+    ...sanitizeContext(kind === 'binding' ? { binding, site: candidate.site } : candidate),
   };
 }
 
@@ -224,7 +231,9 @@ export function createModelStatusStore(now: () => number = Date.now, persistence
   const listeners = new Set<Listener>();
 
   function snapshot(): ModelStatusSnapshot {
-    const snapshotLogs = Object.freeze(logs.map((log) => Object.freeze({ ...log })));
+    const snapshotLogs = Object.freeze(logs.map((log) => Object.freeze({ ...log,
+      ...(log.binding ? { binding: Object.freeze({ ...log.binding, ...(log.binding.attributes ? { attributes: Object.freeze([...log.binding.attributes]) } : {}) }) } : {}),
+    })));
     return Object.freeze({ ...state, logs: snapshotLogs });
   }
 
@@ -325,6 +334,14 @@ export function createModelStatusStore(now: () => number = Date.now, persistence
       };
       const outcome = entry.outcome === 'failed' ? 'failure' : entry.outcome === 'skipped' ? 'skipped' : 'success';
       record('workflow', outcome, messages[entry.outcome], undefined, entry);
+    },
+
+    bindingRecorded(activity, site) {
+      const binding = parseBindingDiagnostic(activity);
+      if (!binding) return;
+      const outcome = binding.event === 'rejected' || binding.event === 'failed' ? 'failure'
+        : binding.event === 'cancelled' ? 'skipped' : binding.event === 'started' ? 'started' : 'success';
+      record('binding', outcome, bindingDiagnosticMessage(binding), undefined, { site, binding });
     },
 
     sliderCompleted(activity) {

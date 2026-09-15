@@ -554,6 +554,27 @@ describe('content runtime messages', () => {
     expect(statusText()).toContain('已自动填入验证码');
     expect(statusText()).toContain('2');
   });
+  it('preserves a pending confirmation when an enabled site is reconciled again', async () => {
+    vi.stubGlobal('defineContentScript', (value: unknown) => value);
+    document.body.innerHTML = '<form><img id="image" alt="captcha" width="120" height="40" src="data:image/png;base64,AQ=="><input aria-label="captcha"></form>';
+    let release!: (value: unknown) => void;
+    let signal!: () => void;
+    const started = new Promise<void>((resolve) => { signal = resolve; });
+    const sendMessage = vi.fn((message: { type: string }) => message.type === 'captcha:recognize'
+      ? new Promise((resolve) => { release = resolve; signal(); })
+      : Promise.resolve(message.type === 'captcha:get-model-status' ? { status: 'ready' } : undefined));
+    const { createRuntimeContent } = await import('../../entrypoints/content');
+    const content = createRuntimeContent({ sendMessage, onMessage: { addListener: listener } });
+    content.enable();
+    const pending = content.workflow.run(document.querySelector<HTMLImageElement>('#image')!, 'automatic');
+    await started;
+    content.enable();
+    release([{ mode: 'letters', text: 'ABC', confidence: .94 }]);
+    await pending;
+    expect(statusText()).toContain('ABC');
+    expect(statusText()).toContain('填入');
+    content.disable();
+  });
   it('does not restore status when a pending explicit request resolves after disable', async () => {
     vi.stubGlobal('defineContentScript', (value: unknown) => value); document.body.innerHTML = '<img id="image" src="data:image/png;base64,AQ==">'; let release!: (value: unknown) => void; let signal!: () => void; const started = new Promise<void>((resolve) => { signal = resolve; });
     const sendMessage = vi.fn((message: { type: string }) => message.type === 'captcha:recognize' ? new Promise((resolve) => { release = resolve; signal(); }) : Promise.resolve(message.type === 'captcha:get-model-status' ? { status: 'ready' } : undefined)); const { createRuntimeContent } = await import('../../entrypoints/content'); const content = createRuntimeContent({ sendMessage, onMessage: { addListener: listener } }); const image = document.querySelector('#image') as HTMLImageElement;

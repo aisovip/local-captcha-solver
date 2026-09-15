@@ -1,4 +1,5 @@
 import type { SliderProvider } from './types';
+import type { SliderBindingElements } from '../content/binding-targets';
 
 export interface SliderRect {
   x: number;
@@ -383,15 +384,24 @@ function fingerprintNumbers(values: readonly number[]): string {
   return (hash >>> 0).toString(16).padStart(8, '0');
 }
 
-async function snapshotForHandle(handle: Element): Promise<SliderChallengeSnapshot | undefined> {
+async function snapshotForHandle(handle: Element, bound?: SliderBindingElements): Promise<SliderChallengeSnapshot | undefined> {
   const handleRect = rectFor(handle);
   if (!handleSized(handleRect)) return undefined;
-  const root = challengeRoot(handle);
+  let root = bound?.handle.parentElement ?? challengeRoot(handle);
+  if (bound) while (root && (!root.contains(bound.image) || !root.contains(bound.track))) root = root.parentElement ?? undefined;
   if (root === undefined) return undefined;
-  const track = trackFor(root, handle, handleRect);
+  const boundTrackRect = bound && rectFor(bound.track);
+  const track = bound ? boundTrackRect && { element: bound.track, rect: boundTrackRect } : trackFor(root, handle, handleRect);
   if (track === undefined) return undefined;
-  const image = imageFor(root, track.rect);
+  const boundImageRect = bound && rectFor(bound.image);
+  const image = bound ? imageFor(bound.image, track.rect) ?? (boundImageRect && { element: bound.image, rect: boundImageRect }) : imageFor(root, track.rect);
   if (image === undefined) return undefined;
+  const center = { x: handleRect.x + handleRect.width / 2, y: handleRect.y + handleRect.height / 2 };
+  if (bound && (!bound.track.contains(handle) || image.rect.width < 160 || image.rect.height < 80 ||
+    image.rect.y + image.rect.height > track.rect.y + 8 || image.rect.width < track.rect.width * .65 ||
+    track.rect.width < Math.max(120, handleRect.width * 3) || track.rect.height > Math.max(80, handleRect.height * 2.5) ||
+    center.x < track.rect.x - 8 || center.x > track.rect.x + track.rect.width + 8 ||
+    center.y < track.rect.y - 8 || center.y > track.rect.y + track.rect.height + 8)) return undefined;
   const challenge = challengeRectFor(root, image.rect, track.rect, handleRect);
   if (track.rect.width <= handleRect.width || Math.abs(track.rect.y + track.rect.height / 2 - (handleRect.y + handleRect.height / 2)) > Math.max(track.rect.height, handleRect.height)) return undefined;
   const provider = providerFor(root);
@@ -506,8 +516,13 @@ export function visibleSliderInteractionTarget(root: ParentNode = document): Ele
   return undefined;
 }
 
-export async function discoverSliderChallenge(root: ParentNode = document): Promise<SliderChallengeDiscovery> {
-  const snapshots = (await Promise.all(handleCandidates(root).map(snapshotForHandle))).filter((value): value is SliderChallengeSnapshot => value !== undefined);
+export async function discoverSliderChallenge(root: ParentNode = document, bound?: SliderBindingElements | null): Promise<SliderChallengeDiscovery> {
+  if (bound === null) return { state: 'not-found' };
+  if (bound) {
+    const challenge = await snapshotForHandle(bound.handle, bound);
+    return challenge ? { state: 'ready', challenge } : { state: 'unsupported' };
+  }
+  const snapshots = (await Promise.all(handleCandidates(root).map((handle) => snapshotForHandle(handle)))).filter((value): value is SliderChallengeSnapshot => value !== undefined);
   const uniqueCandidates = new Map<string, SliderChallengeSnapshot>();
   for (const snapshot of snapshots) {
     const key = [rounded(snapshot.challenge), rounded(snapshot.image), rounded(snapshot.track)].join('|');
@@ -535,11 +550,11 @@ function visibleOutcomeText(root: ParentNode): string {
     .join('\n');
 }
 
-export async function observeSliderOutcome(previousRevision: string, root: ParentNode = document): Promise<SliderOutcome> {
+export async function observeSliderOutcome(previousRevision: string, root: ParentNode = document, bound?: SliderBindingElements | null): Promise<SliderOutcome> {
   const text = visibleOutcomeText(root);
   if (/(验证成功|校验成功|\bsuccess\b|\bverified\b|\bpassed\b|\byou beat\s+\d+%|超过了?\s*\d+%)/i.test(text)) return 'success';
   if (/(验证失败|请重试|再试一次|\bfailed\b|\btry again\b|\bretry\b)/i.test(text)) return 'failure';
-  const current = await discoverSliderChallenge(root);
+  const current = await discoverSliderChallenge(root, bound);
   if (current.state === 'activatable') return 'failure';
   if (current.state === 'not-found') return 'absent';
   if (current.state !== 'ready') return 'uncertain';

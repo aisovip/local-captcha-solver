@@ -3,7 +3,6 @@ import type { ModelLog, ModelStatusSnapshot } from '../../src/background/model-s
 import { GLOBAL_HTTP_ORIGINS, originsForPage, originsForSelectedSite } from '../../src/platform/permissions';
 import {
   createSettingsStore,
-  isInterfaceLocale,
   isRecognitionShortcut,
   normalizeHostname,
   type CaptchaSettings,
@@ -14,6 +13,8 @@ import {
 import { createTranslator, resolveUiLocale, type Translator, type UiLocale } from '../../src/platform/i18n';
 import { sendRuntimeMessage } from '../../src/platform/runtime-messaging';
 import { supportsPuzzleSliders } from '../../src/platform/extension-capabilities';
+import { bindLanguageSwitch, languageSwitchMarkup } from '../../src/ui/language-switch';
+import { bindingDiagnosticMessage } from '../../src/platform/binding-diagnostics';
 
 type ViewName = 'static' | 'slider' | 'diagnostics' | 'about';
 const MODEL_STATUS_POLL_INTERVAL_MS = 250;
@@ -67,6 +68,18 @@ function diagnosticDetails(log: ModelLog): string {
     log.fillValue,
     log.durationMs === undefined ? undefined : `${Math.round(log.durationMs)} ms`,
   ];
+  if (log.kind === 'binding' && log.binding) {
+    const binding = log.binding;
+    const fields = [
+      `attempt=${binding.attemptId}`, `kind=${binding.kind}`, `step=${binding.step}`, `event=${binding.event}`,
+      binding.reason && `reason=${binding.reason}`, binding.tag && `tag=${binding.tag}`,
+      binding.inputType && `type=${binding.inputType}`, binding.attributes && `attributes=${binding.attributes.join(',') || 'none'}`,
+      binding.strategy && `strategy=${binding.strategy}`,
+      binding.selectorAttempts === undefined ? undefined : `attempts=${binding.selectorAttempts}`,
+      binding.closestMatchCount === undefined ? undefined : `matches=${binding.closestMatchCount}`,
+    ];
+    return [...common, ...fields].filter((value): value is string => typeof value === 'string' && value !== '').map(escapeHtml).join(' · ');
+  }
   if (log.kind !== 'slider') return common.filter((value): value is string => value !== undefined && value !== '').map(escapeHtml).join(' · ');
   const fields: Array<[string, string | undefined]> = [
     ['provider', log.provider],
@@ -128,11 +141,7 @@ function uniqueOrigins(rules: readonly SelectedSiteRule[]): string[] {
   return [...new Set(rules.flatMap((rule) => originsForSelectedSite(rule)))];
 }
 
-function languageOptions(settings: CaptchaSettings, t: Translator): string {
-  return `<option value="system" ${settings.interfaceLocale === 'system' ? 'selected' : ''}>${t('languageSystem')}</option><option value="zh_CN" ${settings.interfaceLocale === 'zh_CN' ? 'selected' : ''}>${t('languageChinese')}</option><option value="en" ${settings.interfaceLocale === 'en' ? 'selected' : ''}>${t('languageEnglish')}</option>`;
-}
-
-function shell(settings: CaptchaSettings, sliderSupported: boolean, t: Translator): string {
+function shell(locale: UiLocale, sliderSupported: boolean, t: Translator): string {
   return `<div class="settings-shell">
     <aside class="settings-sidebar">
       <a class="brand" href="#static" data-nav="static" aria-label="Captcha Helper">
@@ -145,7 +154,7 @@ function shell(settings: CaptchaSettings, sliderSupported: boolean, t: Translato
         <button type="button" data-nav="diagnostics"><span class="nav-mark diagnostic-mark" aria-hidden="true"><i></i></span><span><strong>${t('navDiagnostics')}</strong><small>${t('recentStatus')}</small></span></button>
         <button type="button" data-nav="about"><span class="nav-mark about-mark" aria-hidden="true">i</span><span><strong>${t('navAbout')}</strong><small>Captcha Helper</small></span></button>
       </nav>
-      <div class="sidebar-footer"><label for="interface-locale"><span>${t('languageLabel')}</span><select id="interface-locale">${languageOptions(settings, t)}</select></label><button type="button" data-open-guide>${t('reopenGuide')}</button><p><i aria-hidden="true"></i>${t('footerPrivacy')}</p></div>
+      <div class="sidebar-footer"><div class="sidebar-language"><span>${t('languageHeading')}</span>${languageSwitchMarkup(locale, t)}</div><button type="button" class="sidebar-guide" data-open-guide="welcome"><span class="page-icon icon-book" aria-hidden="true"></span><span class="sidebar-guide-copy"><strong>${t('gettingStarted')}</strong><small>${t('gettingStartedBody')}</small></span><span class="page-icon icon-arrow-up-right" aria-hidden="true"></span></button><p><i aria-hidden="true"></i>${t('footerPrivacy')}</p></div>
     </aside>
     <main class="settings-content" id="content">
       <section class="view" data-view="static"></section>
@@ -161,7 +170,6 @@ function pageHeading(eyebrow: string, title: string, body: string): string {
 }
 
 function siteList(sites: readonly SelectedSiteAccess[], t: Translator): string {
-  if (sites.length === 0) return `<p class="empty-state">${t('noAuthorizedSites')}</p>`;
   return `<ul class="site-list">${sites.map(({ rule, granted }) => `<li><div><strong>${rule.includeSubdomains ? `*.${rule.hostname}` : rule.hostname}</strong><small data-permission="${granted ? 'granted' : 'missing'}">${granted ? t('sitePermissionGranted') : t('sitePermissionMissing')} · ${rule.includeSubdomains ? t('includesSubdomains') : t('exactHostname')}</small></div><button type="button" class="icon-command" data-remove-site="${rule.hostname}" data-subdomains="${rule.includeSubdomains}" title="${t('remove')}" aria-label="${t('remove')} ${rule.hostname}">×</button></li>`).join('')}</ul>`;
 }
 
@@ -170,32 +178,53 @@ function disabledList(hosts: readonly string[], t: Translator, scope: 'site' | '
   return `<ul class="site-list">${hosts.map((host) => `<li><strong>${host}</strong><button type="button" class="text-button" data-restore-${scope}="${host}">${t('restore')}</button></li>`).join('')}</ul>`;
 }
 
+function accessChoices(scope: 'static' | 'slider', mode: 'all' | 'selected', t: Translator): string {
+  const attribute = scope === 'static' ? 'data-mode' : 'data-slider-mode';
+  return `<div class="access-choices" role="group" aria-labelledby="${scope}-access-title" ${scope === 'static' ? 'data-access-mode' : 'data-slider-access-mode'}>
+    <button type="button" ${attribute}="selected" aria-pressed="${mode === 'selected'}"><span class="choice-indicator" aria-hidden="true"></span><span><strong>${t('selectedSites')}</strong><small>${t('settingsSelectedScope')}</small></span></button>
+    <button type="button" ${attribute}="all" aria-pressed="${mode === 'all'}"><span class="choice-indicator" aria-hidden="true"></span><span><strong>${t('allSites')}</strong><small>${t('settingsAllScope')}</small></span></button>
+  </div>`;
+}
+
+function globalAccessState(scope: 'static' | 'slider', granted: boolean, t: Translator): string {
+  return `<div class="access-state" data-granted="${granted}"><p><i class="status-dot" data-granted="${granted}" aria-hidden="true"></i>${granted ? t('settingsAllGranted') : t('settingsAllMissing')}</p>
+    ${granted ? (scope === 'static' ? `<button type="button" class="text-button" data-revoke-global>${t('revokeGlobal')}</button>` : '') : `<button type="button" class="primary-button" data-grant-${scope}>${t('grantAll')}</button>`}
+  </div>`;
+}
+
+function siteDisclosure(id: string, title: string, count: number, body: string, content: string): string {
+  return `<details class="settings-disclosure" id="${id}"><summary><span id="${id}-title">${title}</span><span class="count">${count}</span></summary><div class="disclosure-content"><p class="group-description">${body}</p>${content}</div></details>`;
+}
+
 function staticMarkup(settings: CaptchaSettings, globalGranted: boolean, selectedAccess: readonly SelectedSiteAccess[], t: Translator): string {
   const selectedGranted = selectedAccess.filter((site) => site.granted).length;
-  const permissionGranted = settings.accessMode === 'all' ? globalGranted : selectedGranted > 0;
-  const permissionLabel = settings.accessMode === 'all'
-    ? (globalGranted ? t('accessGranted') : t('accessNotGranted'))
-    : t('selectedAccessStatus', { granted: selectedGranted, total: selectedAccess.length });
-  return `${pageHeading(t('navSettings'), t('welcomeStaticTitle'), `${t('accessDescription')} ${t('behaviorDescription')}`)}
-    <section class="capability-summary static-summary"><div class="summary-identity"><span aria-hidden="true">Aa</span><div><strong>${t('welcomeStaticTitle')}</strong><small>${t('localOnly')}</small></div></div><dl><div><dt>${t('modeLabel')}</dt><dd>${settings.accessMode === 'all' ? t('allSites') : t('selectedSites')}</dd></div><div><dt>${t('autoFill')}</dt><dd>${settings.autoFill ? t('settingOn') : t('settingOff')}</dd></div><div><dt>${t('authorizedSites')}</dt><dd>${selectedGranted}/${selectedAccess.length}</dd></div></dl></section>
-    <div class="content-section access-section">
-      <div class="section-heading"><div><h2>${t('modeLabel')}</h2><p><i class="status-dot" data-granted="${permissionGranted}"></i>${permissionLabel}</p></div><span class="mode-summary">${settings.accessMode === 'all' ? t('accessSummaryAll') : t('accessSummarySelected')}</span></div>
-      <div class="segmented-control" data-access-mode>
-        <button type="button" data-mode="all" aria-pressed="${settings.accessMode === 'all'}">${t('allSites')}</button>
-        <button type="button" data-mode="selected" aria-pressed="${settings.accessMode === 'selected'}">${t('selectedSites')}</button>
+  return `${pageHeading(t('navSettings'), t('welcomeStaticTitle'), t('settingsStaticIntro'))}
+    <section class="settings-section" aria-labelledby="static-access-title">
+      <h2 id="static-access-title">${t('settingsRunWhere')}</h2>
+      <div class="settings-group">
+        <div class="access-controls">${accessChoices('static', settings.accessMode, t)}
+          ${settings.accessMode === 'all' ? globalAccessState('static', globalGranted, t) : ''}
+          <p class="inline-status" data-static-status role="status"></p>
+        </div>
+        ${settings.accessMode === 'selected' ? `<div class="site-manager">
+          <div class="group-heading"><h3>${t('settingsAllowedSites')}</h3>${selectedAccess.length > 0 ? `<span>${t('selectedAccessStatus', { granted: selectedGranted, total: selectedAccess.length })}</span>` : ''}</div>
+          <form class="site-form" data-site-form>
+            <label><span>${t('addSite')}</span><input id="static-hostname" name="hostname" type="text" inputmode="url" autocomplete="off" placeholder="${t('hostnamePlaceholder')}" /></label>
+            <label class="check-row"><input name="subdomains" type="checkbox" /><span>${t('includeSubdomains')}</span></label>
+            <button type="submit" class="primary-button">${t('settingsAddAndAllow')}</button>
+          </form>
+          ${selectedAccess.length === 0 ? `<p class="site-empty">${t('settingsAddFirstSite')}</p>` : siteList(selectedAccess, t)}
+        </div>` : selectedAccess.length > 0 ? siteDisclosure('static-saved', t('settingsSavedSites'), selectedAccess.length, t('settingsSavedSitesBody'), siteList(selectedAccess, t)) : ''}
+        ${siteDisclosure('static-disabled', t('disabledSites'), settings.disabledHosts.length, t('settingsDisabledStaticBody'), disabledList(settings.disabledHosts, t))}
       </div>
-      <p class="inline-status" data-static-status role="status"></p>
-      ${settings.accessMode === 'all' && globalGranted ? `<button type="button" class="text-button danger" data-revoke-global>${t('revokeGlobal')}</button>` : ''}
-      ${settings.accessMode === 'selected' ? `<form class="site-form" data-site-form><label><span>${t('addSite')}</span><input name="hostname" type="text" inputmode="url" autocomplete="off" placeholder="${t('hostnamePlaceholder')}" /></label><label class="check-row"><input name="subdomains" type="checkbox" /><span>${t('includeSubdomains')}</span></label><button type="submit" class="primary-button">${t('add')}</button></form>` : ''}
-    </div>
-    <div class="site-columns">
-      <section class="content-section list-section" aria-labelledby="authorized-title"><div class="section-heading compact"><h2 id="authorized-title">${t('authorizedSites')}</h2><span class="count">${selectedGranted}/${selectedAccess.length}</span></div>${siteList(selectedAccess, t)}</section>
-      <section class="content-section list-section" aria-labelledby="disabled-title"><div class="section-heading compact"><h2 id="disabled-title">${t('disabledSites')}</h2><span class="count">${settings.disabledHosts.length}</span></div>${disabledList(settings.disabledHosts, t)}</section>
-    </div>
-    <div class="static-preference-grid">
-      <section class="content-section behavior-section"><div class="section-heading compact"><h2>${t('recognitionHeading')}</h2></div><div class="setting-list">${switchControl('settings-auto-fill', settings.autoFill, t('autoFill'), t('autoFillBody'))}${switchControl('settings-copy', settings.copyOnNoField, t('copyOnNoField'), t('copyOnNoFieldBody'))}<label class="setting-row select-row" for="settings-shortcut"><span><strong>${t('shortcut')}</strong><small>${t('setupLater')}</small></span><select id="settings-shortcut">${shortcutOptions(settings.recognitionShortcut, t)}</select></label></div></section>
-      <section class="content-section site-mode-section"><div class="section-heading compact"><h2>${t('siteModeOverrides')}</h2><span class="count">${settings.siteRecognitionModes.length}</span></div>${siteModeOverrides(settings.siteRecognitionModes, t)}</section>
-    </div>`;
+    </section>
+    <section class="settings-section" aria-labelledby="static-filling-title">
+      <h2 id="static-filling-title">${t('settingsFillingTitle')}</h2>
+      <div class="settings-group">
+        <div class="setting-list">${switchControl('settings-auto-fill', settings.autoFill, t('autoFill'), t('autoFillBody'))}${switchControl('settings-copy', settings.copyOnNoField, t('copyOnNoField'), t('copyOnNoFieldBody'))}<label class="setting-row select-row" for="settings-shortcut"><span><strong>${t('shortcut')}</strong><small>${t('settingsShortcutBody')}</small></span><select id="settings-shortcut">${shortcutOptions(settings.recognitionShortcut, t)}</select></label></div>
+        ${siteDisclosure('static-types', t('settingsSiteTypes'), settings.siteRecognitionModes.length, t('settingsSiteTypesBody'), siteModeOverrides(settings.siteRecognitionModes, t))}
+      </div>
+    </section>`;
 }
 
 function switchControl(id: string, checked: boolean, label: string, body: string): string {
@@ -222,36 +251,56 @@ function siteModeOverrides(overrides: CaptchaSettings['siteRecognitionModes'], t
 
 function sliderMarkup(settings: CaptchaSettings, globalGranted: boolean, debuggerGranted: boolean, t: Translator): string {
   const sliderSites = settings.sliderEnabledHosts.length === 0
-    ? `<p class="empty-state">${t('noSliderSites')}</p>`
+    ? `<p class="site-empty">${t('settingsAddFirstSite')}</p>`
     : `<ul class="site-list">${settings.sliderEnabledHosts.map((host) => `<li><div><strong>${host}</strong><small>${t('sliderSiteEnabled')}</small></div><button type="button" class="text-button danger" data-remove-slider="${host}">${t('remove')}</button></li>`).join('')}</ul>`;
-  const sliderScope = settings.sliderAccessMode === 'all' ? t('allSites') : t('selectedSites');
-  return `${pageHeading(t('navSettings'), t('welcomeSliderTitle'), t('sliderSitesDescription'))}
-    <section class="capability-summary slider-summary"><div class="summary-identity"><span aria-hidden="true"><i></i></span><div><strong>${t('welcomeSliderTitle')}</strong><small>Beta · GeeTest / Aliyun</small></div></div><dl><div><dt>${t('modeLabel')}</dt><dd>${sliderScope}</dd></div><div><dt>debugger</dt><dd>${debuggerGranted ? t('accessGranted') : t('accessNotGranted')}</dd></div><div><dt>${t('authorizedSites')}</dt><dd>${settings.sliderAccessMode === 'all' ? 'HTTP / HTTPS' : settings.sliderEnabledHosts.length}</dd></div></dl></section>
-    <section class="content-section slider-settings-section">
-      <div class="section-heading compact"><div><h2>${t('sliderSitesHeading')}</h2><p class="section-description">${t('sliderSitesDescription')}</p></div><span class="count">${settings.sliderAccessMode === 'all' ? t('allSites') : settings.sliderEnabledHosts.length}</span></div>
-      <div class="segmented-control" data-slider-access-mode>
-        <button type="button" data-slider-mode="all" aria-pressed="${settings.sliderAccessMode === 'all'}">${t('allSites')}</button>
-        <button type="button" data-slider-mode="selected" aria-pressed="${settings.sliderAccessMode === 'selected'}">${t('selectedSites')}</button>
+  return `${pageHeading(t('navSettings'), `${t('welcomeSliderTitle')} <span class="feature-label">Beta</span>`, t('settingsSliderIntro'))}
+    <section class="settings-section" aria-labelledby="slider-access-title">
+      <h2 id="slider-access-title">${t('settingsRunWhere')}</h2>
+      <div class="settings-group">
+        <div class="access-controls">${accessChoices('slider', settings.sliderAccessMode, t)}
+          <p class="permission-note${debuggerGranted ? '' : ' permission-missing'}"><span class="page-icon icon-shield" aria-hidden="true"></span>${debuggerGranted ? t('settingsSliderPermission') : t('sliderPermissionRequired')}</p>
+          ${settings.sliderAccessMode === 'all' ? globalAccessState('slider', globalGranted, t) : ''}
+          <p class="inline-status" data-slider-settings-status role="status"></p>
+        </div>
+        ${settings.sliderAccessMode === 'selected' ? `<div class="site-manager">
+          <div class="group-heading"><h3>${t('settingsAllowedSites')}</h3>${settings.sliderEnabledHosts.length > 0 ? `<span class="count">${settings.sliderEnabledHosts.length}</span>` : ''}</div>
+          <form class="site-form" data-slider-site-form><label><span>${t('addSite')}</span><input id="slider-hostname" name="hostname" type="text" inputmode="url" autocomplete="off" placeholder="${t('hostnamePlaceholder')}" /></label><button type="submit" class="primary-button">${t('settingsAddAndAllow')}</button></form>
+          ${sliderSites}
+        </div>` : ''}
+        ${siteDisclosure('slider-disabled', t('disabledSites'), settings.sliderDisabledHosts.length, t('settingsDisabledSliderBody'), disabledList(settings.sliderDisabledHosts, t, 'slider'))}
       </div>
-      <p class="inline-status" data-slider-settings-status role="status"></p>
-      <p class="permission-note"><i class="status-dot" data-granted="${settings.sliderAccessMode === 'all' && globalGranted}"></i>${settings.sliderAccessMode === 'all' ? (globalGranted ? t('sliderGlobalGranted') : t('sliderGlobalPermissionMissing')) : t('sliderSelectedDescription')}</p>
-      ${settings.sliderAccessMode === 'selected' ? `<form class="site-form" data-slider-site-form><label><span>${t('addSliderSite')}</span><input name="hostname" type="text" inputmode="url" autocomplete="off" placeholder="${t('hostnamePlaceholder')}" /></label><button type="submit" class="primary-button">${t('add')}</button></form>` : ''}
-      ${settings.sliderAccessMode === 'selected' ? sliderSites : ''}
     </section>
-    <section class="content-section list-section" aria-labelledby="slider-disabled-title"><div class="section-heading compact"><h2 id="slider-disabled-title">${t('disabledSites')}</h2><span class="count">${settings.sliderDisabledHosts.length}</span></div>${disabledList(settings.sliderDisabledHosts, t, 'slider')}</section>
-    <section class="content-section demo-launch"><div><span class="demo-brand">G</span><div><h2>GeeTest</h2><p>2captcha.com/demo/geetest</p></div></div><div><button type="button" class="secondary-button" data-open-geetest>${t('openGeeTestDemo')}</button><button type="button" class="text-button" data-open-guide>${t('reopenGuide')}</button></div></section>`;
+    <section class="settings-section" aria-labelledby="slider-try-title">
+      <h2 id="slider-try-title">${t('settingsSliderTry')}</h2>
+      <div class="settings-group settings-help">
+        <h3>${t('settingsSliderDemoTitle')}</h3><p>${t('settingsSliderDemoBody')}</p><div class="help-actions"><button type="button" class="secondary-button" data-open-geetest>${t('openGeeTestDemo')}<span class="page-icon icon-arrow-up-right" aria-hidden="true"></span></button><button type="button" class="text-button" data-open-guide="slider"><span class="page-icon icon-book" aria-hidden="true"></span>${t('sliderGuide')}</button></div>
+      </div>
+    </section>`;
 }
 
-function diagnosticsMarkup(snapshot: ModelStatusSnapshot | undefined, t: Translator): string {
+function diagnosticsMarkup(snapshot: ModelStatusSnapshot | undefined, t: Translator, locale: UiLocale): string {
   const logs = snapshot?.logs.slice().reverse() ?? [];
   return `${pageHeading(t('navDiagnostics'), t('diagnosticsHeading'), t('diagnosticsBody'))}
     <section class="content-section diagnostics-summary"><div><span class="model-state" data-state="${snapshot?.status ?? 'loading'}"></span><div><strong>${snapshot?.message ?? t('modelLoading')}</strong><progress value="${snapshot?.progress ?? 0}" max="100"></progress></div></div><div class="toolbar"><button type="button" class="secondary-button" data-retry-model>${t('retryModel')}</button><button type="button" class="secondary-button" data-copy-diagnostics>${t('copyDiagnostics')}</button><button type="button" class="text-button danger" data-clear-diagnostics>${t('clearDiagnostics')}</button></div></section>
-    <section class="content-section diagnostic-stream">${logs.length === 0 ? `<p class="empty-state">${t('noDiagnostics')}</p>` : `<ol>${logs.map((log) => `<li><time>${new Date(log.at).toLocaleString()}</time><div><strong>${escapeHtml(log.message)}</strong><p>${diagnosticDetails(log)}</p></div></li>`).join('')}</ol>`}</section>`;
+    <section class="content-section diagnostic-stream">${logs.length === 0 ? `<p class="empty-state">${t('noDiagnostics')}</p>` : `<ol>${logs.map((log) => `<li><time>${new Date(log.at).toLocaleString()}</time><div><strong>${escapeHtml(log.binding ? bindingDiagnosticMessage(log.binding, locale) : log.message)}</strong><p>${diagnosticDetails(log)}</p></div></li>`).join('')}</ol>`}</section>`;
 }
 
-function aboutMarkup(version: string, t: Translator): string {
+function aboutMarkup(version: string, t: Translator, locale: UiLocale): string {
+  const words = (cn: string, en: string) => locale === 'zh_CN' ? cn : en;
   return `${pageHeading(t('navAbout'), t('aboutHeading'), t('aboutBody'))}
-    <section class="content-section about-section"><div class="about-brand"><img src="/brand/captcha-helper.svg" alt="Captcha Helper" /><div><strong>Captcha Helper</strong><span>${t('localBadge')}</span></div></div><dl><div><dt>${t('version')}</dt><dd>${version}</dd></div><div><dt>${t('developer')}</dt><dd>Hongshuo Wang</dd></div></dl><nav class="about-links"><a href="https://github.com/hongshuo-wang/local-captcha-solver" target="_blank" rel="noreferrer">${t('sourceCode')}</a><a href="https://github.com/hongshuo-wang/local-captcha-solver/blob/main/PRIVACY.md" target="_blank" rel="noreferrer">${t('privacy')}</a><a href="https://github.com/hongshuo-wang/local-captcha-solver/blob/main/LICENSE" target="_blank" rel="noreferrer">${t('license')}</a></nav></section>`;
+    <section class="content-section about-section">
+      <div class="about-brand"><img src="/brand/captcha-helper.svg" alt="Captcha Helper" /><div><strong>Captcha Helper</strong><span>${t('localBadge')}</span></div></div>
+      <dl><div><dt>${t('version')}</dt><dd>${version}</dd></div><div><dt>${t('developer')}</dt><dd>Hongshuo Wang</dd></div></dl>
+      <nav class="about-actions" aria-label="${words('版本与支持', 'Releases and support')}">
+        <a class="about-resource" href="onboarding.html?flow=history" target="_blank" rel="noopener noreferrer"><span class="resource-icon"><span class="page-icon icon-history" aria-hidden="true"></span></span><span class="resource-copy"><strong>${words('版本记录', 'Release history')}</strong><small>${words('回看每个版本的介绍与更新', 'Explore every release and its changes.')}</small></span><span class="page-icon icon-arrow-up-right" aria-hidden="true"></span></a>
+        <a class="about-resource" href="support.html" target="_blank" rel="noopener noreferrer"><span class="resource-icon"><span class="page-icon icon-coffee" aria-hidden="true"></span></span><span class="resource-copy"><strong>${words('请我喝杯咖啡', 'Buy me a coffee')}</strong><small>${words('通过微信或 Ko-fi 支持开发', 'Support the project with WeChat or Ko-fi.')}</small></span><span class="page-icon icon-arrow-up-right" aria-hidden="true"></span></a>
+      </nav>
+      <nav class="about-project-links" aria-label="${words('项目资料', 'Project information')}">
+        <a href="https://github.com/hongshuo-wang/local-captcha-solver" target="_blank" rel="noopener noreferrer"><span class="page-icon icon-github" aria-hidden="true"></span>${t('sourceCode')}</a>
+        <a href="https://github.com/hongshuo-wang/local-captcha-solver/blob/main/PRIVACY.md" target="_blank" rel="noopener noreferrer"><span class="page-icon icon-shield" aria-hidden="true"></span>${t('privacy')}</a>
+        <a href="https://github.com/hongshuo-wang/local-captcha-solver/blob/main/LICENSE" target="_blank" rel="noopener noreferrer"><span class="page-icon icon-file" aria-hidden="true"></span>${t('license')}</a>
+      </nav>
+    </section>`;
 }
 
 export async function startOptions(
@@ -266,6 +315,7 @@ export async function startOptions(
   let t = createTranslator(locale);
   let snapshot: ModelStatusSnapshot | undefined;
   let renderGeneration = 0;
+  const disclosureState = new Map<string, boolean>();
   let modelRefreshTimer: ReturnType<typeof setTimeout> | undefined;
   const readModelStatus = async (): Promise<ModelStatusSnapshot | undefined> => {
     try { return await extension.runtime.sendMessage({ type: 'captcha:get-model-status' }) as ModelStatusSnapshot; }
@@ -303,14 +353,30 @@ export async function startOptions(
       granted: await extension.permissions.contains({ origins: [...originsForSelectedSite(rule)] }).catch(() => false),
     })));
     if (generation !== renderGeneration) return;
-    root.innerHTML = shell(settings, sliderSupported, t);
+    root.querySelectorAll<HTMLDetailsElement>('.settings-disclosure').forEach((details) => disclosureState.set(details.id, details.open));
+    const focused = document.activeElement as HTMLElement | null;
+    let focusSelector: string | undefined;
+    if (focused && root.contains(focused)) {
+      if (focused.id) focusSelector = `#${CSS.escape(focused.id)}`;
+      else if (focused.matches('.settings-disclosure > summary')) focusSelector = `#${focused.parentElement!.id} > summary`;
+      else {
+        const attribute = ['data-language', 'data-mode', 'data-slider-mode'].find((name) => focused.hasAttribute(name));
+        if (attribute) focusSelector = `[${attribute}="${focused.getAttribute(attribute)}"]`;
+      }
+    }
+    root.innerHTML = shell(locale, sliderSupported, t);
     required<HTMLElement>(root, '[data-view="static"]').innerHTML = staticMarkup(settings, globalGranted, selectedAccess, t);
     required<HTMLElement>(root, '[data-view="slider"]').innerHTML = sliderSupported ? sliderMarkup(settings, globalGranted, debuggerGranted, t) : '';
-    required<HTMLElement>(root, '[data-view="diagnostics"]').innerHTML = diagnosticsMarkup(snapshot, t);
-    required<HTMLElement>(root, '[data-view="about"]').innerHTML = aboutMarkup(extension.runtime.getManifest().version, t);
+    required<HTMLElement>(root, '[data-view="diagnostics"]').innerHTML = diagnosticsMarkup(snapshot, t, locale);
+    required<HTMLElement>(root, '[data-view="about"]').innerHTML = aboutMarkup(extension.runtime.getManifest().version, t, locale);
     root.querySelectorAll<HTMLElement>('[data-view]').forEach((element) => { element.hidden = element.dataset.view !== view; });
     root.querySelectorAll<HTMLElement>('[data-nav]').forEach((control) => control.setAttribute('aria-current', control.dataset.nav === view ? 'page' : 'false'));
     wire(view);
+    root.querySelectorAll<HTMLDetailsElement>('.settings-disclosure').forEach((details) => { details.open = disclosureState.get(details.id) ?? false; });
+    if (focusSelector) {
+      const control = root.querySelector<HTMLElement>(focusSelector);
+      if (control?.closest('[hidden]') === null) control.focus({ preventScroll: true });
+    }
     if (view === 'diagnostics' && snapshot?.status === 'loading') {
       modelRefreshTimer = setTimeout(() => { if (currentView() === 'diagnostics') void show('diagnostics'); }, MODEL_STATUS_REFRESH_MS);
     }
@@ -319,7 +385,7 @@ export async function startOptions(
   const selectMode = async (mode: 'all' | 'selected'): Promise<void> => {
     if (mode === 'all') {
       const granted = await extension.permissions.request({ origins: [...GLOBAL_HTTP_ORIGINS] });
-      if (!granted) { setInlineStatus('[data-static-status]', t('permissionDenied'), true); return; }
+      if (!granted) { setInlineStatus('[data-static-status]', t('settingsAllDenied'), true); return; }
       await settingsStore.setAccessMode('all');
     } else {
       await settingsStore.setAccessMode('selected');
@@ -347,9 +413,9 @@ export async function startOptions(
       void show(next);
     }));
     root.querySelectorAll<HTMLButtonElement>('[data-open-guide]').forEach((button) => button.addEventListener('click', () => {
-      const url = extension.runtime.getURL(sliderSupported
-        ? `onboarding.html?flow=upgrade&version=${encodeURIComponent(extension.runtime.getManifest().version)}&manual=1`
-        : 'onboarding.html');
+      const url = extension.runtime.getURL(button.dataset.openGuide === 'slider'
+        ? 'onboarding.html?flow=slider'
+        : 'onboarding.html?flow=welcome');
       if (extension.tabs) void extension.tabs.create({ url });
       else navigate(url);
     }));
@@ -358,7 +424,7 @@ export async function startOptions(
       if (extension.tabs) void extension.tabs.create({ url });
       else navigate(url);
     });
-    root.querySelectorAll<HTMLButtonElement>('[data-mode]').forEach((button) => button.addEventListener('click', () => { void selectMode(button.dataset.mode as 'all' | 'selected'); }));
+    root.querySelectorAll<HTMLButtonElement>('[data-mode], [data-grant-static]').forEach((button) => button.addEventListener('click', () => { void selectMode((button.dataset.mode ?? 'all') as 'all' | 'selected'); }));
     root.querySelector<HTMLInputElement>('#settings-auto-fill')?.addEventListener('change', (event) => { void settingsStore.setAutoFill((event.currentTarget as HTMLInputElement).checked); });
     root.querySelector<HTMLInputElement>('#settings-copy')?.addEventListener('change', (event) => { void settingsStore.setCopyOnNoField((event.currentTarget as HTMLInputElement).checked); });
     root.querySelector<HTMLSelectElement>('#settings-shortcut')?.addEventListener('change', (event) => {
@@ -374,12 +440,12 @@ export async function startOptions(
     root.querySelectorAll<HTMLButtonElement>('[data-restore-slider]').forEach((button) => button.addEventListener('click', () => {
       void enableSliderSite(button.dataset.restoreSlider!);
     }));
-    root.querySelectorAll<HTMLButtonElement>('[data-slider-mode]').forEach((button) => button.addEventListener('click', () => {
+    root.querySelectorAll<HTMLButtonElement>('[data-slider-mode], [data-grant-slider]').forEach((button) => button.addEventListener('click', () => {
       void (async () => {
-        const mode = button.dataset.sliderMode as 'all' | 'selected';
+        const mode = (button.dataset.sliderMode ?? 'all') as 'all' | 'selected';
         if (mode === 'all') {
           const granted = await extension.permissions.request({ origins: [...GLOBAL_HTTP_ORIGINS] });
-          if (!granted) { setInlineStatus('[data-slider-settings-status]', t('permissionDenied'), true); return; }
+          if (!granted) { setInlineStatus('[data-slider-settings-status]', t('settingsAllDenied'), true); return; }
         } else {
           const current = await settingsStore.read();
           if (current.accessMode !== 'all') await extension.permissions.remove({ origins: [...GLOBAL_HTTP_ORIGINS] }).catch(() => false);
@@ -399,9 +465,9 @@ export async function startOptions(
         await enableSliderSite(hostname);
       })();
     });
-    root.querySelector<HTMLSelectElement>('#interface-locale')?.addEventListener('change', (event) => {
-      const value = (event.currentTarget as HTMLSelectElement).value;
-      if (isInterfaceLocale(value)) void settingsStore.setInterfaceLocale(value).then(() => show(view));
+    bindLanguageSwitch(root, async (value) => {
+      await settingsStore.setInterfaceLocale(value);
+      await show(currentView());
     });
     root.querySelector<HTMLButtonElement>('[data-revoke-global]')?.addEventListener('click', () => { void extension.permissions.remove({ origins: [...GLOBAL_HTTP_ORIGINS] }).then(reconcile).then(() => show('static')); });
     root.querySelector<HTMLFormElement>('[data-site-form]')?.addEventListener('submit', (event) => {
@@ -475,7 +541,18 @@ export async function startOptions(
     });
     root.querySelector<HTMLButtonElement>('[data-copy-diagnostics]')?.addEventListener('click', (event) => {
       const button = event.currentTarget as HTMLButtonElement;
-      void navigator.clipboard.writeText(JSON.stringify(snapshot ?? {}, null, 2)).then(() => { button.textContent = t('copied'); }, () => { button.textContent = t('copyFailed'); });
+      button.disabled = true;
+      void (async () => {
+        try {
+          const latest = await readModelStatus();
+          if (!latest) throw new Error('Diagnostic snapshot unavailable');
+          snapshot = latest;
+          const report = { extensionVersion: extension.runtime.getManifest().version, browser: navigator.userAgent, interfaceLocale: locale, ...latest };
+          await navigator.clipboard.writeText(`\`\`\`json\n${JSON.stringify(report, null, 2)}\n\`\`\``);
+          button.textContent = t('copied');
+        } catch { button.textContent = t('copyFailed'); }
+        finally { button.disabled = false; }
+      })();
     });
   };
 
@@ -495,6 +572,7 @@ if (root !== null && typeof browser !== 'undefined') {
   void startOptions(root, {
     storage: browser.storage,
     permissions: browser.permissions,
+    tabs: browser.tabs,
     runtime: {
       sendMessage: (message) => sendRuntimeMessage(browser.runtime, message),
       getManifest: () => browser.runtime.getManifest(),
