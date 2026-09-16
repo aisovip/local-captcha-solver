@@ -4,7 +4,7 @@ import { access, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
-import { startFixtureServer, type FixtureServer } from './fixtures/server';
+import { fixtureFrameOrigin, startFixtureServer, type FixtureServer } from './fixtures/server';
 import { DEFAULT_SETTINGS } from '../../src/platform/settings-store';
 import { MODEL_LOGS_STORAGE_KEY, type ModelStatusSnapshot } from '../../src/background/model-status';
 
@@ -163,6 +163,7 @@ test.beforeAll(async () => {
   }
   server = await startFixtureServer();
   await context.route(`${server.origin}/**`, fulfillFixtureRequest);
+  await context.route(`${fixtureFrameOrigin}/**`, fulfillFixtureRequest);
   const initialWorker = context.serviceWorkers()[0] ?? await context.waitForEvent('serviceworker');
   extensionOrigin = `chrome-extension://${new URL(initialWorker.url()).host}`;
   extensionPage = await context.newPage();
@@ -453,6 +454,17 @@ test('automatically handles a supported slider after the site is explicitly enab
   await expect(aliyunShapePage.locator('[data-local-captcha-status]')).toContainText(/滑块已自动完成|Slider drag completed/);
   await aliyunShapePage.screenshot({ path: testInfo.outputPath('captcha-helper-aliyun-shape-slider-success.png'), fullPage: true });
   await aliyunShapePage.close();
+
+  const bytedancePage = await open('/bytedance-frame.html');
+  const bytedanceFrame = bytedancePage.frameLocator('iframe[title="请完成下列验证后继续"]');
+  await expect.poll(async () => {
+    const snapshot = await extensionMessage({ type: 'captcha:get-model-status' }) as ModelStatusSnapshot;
+    const log = snapshot.logs.findLast((entry) => entry.kind === 'slider' && entry.frameSite === 'captcha-frame.e2e.test');
+    return { outcome: log?.outcome, state: log?.sliderState, phase: log?.phase, site: log?.site, frameSite: log?.frameSite };
+  }).toEqual({ outcome: 'success', state: 'success', phase: 'outcome', site: 'captcha.e2e.test', frameSite: 'captcha-frame.e2e.test' });
+  await expect(bytedanceFrame.locator('#result')).toHaveText('验证成功', { timeout: 15_000 });
+  await bytedancePage.screenshot({ path: testInfo.outputPath('captcha-helper-bytedance-frame-success.png'), fullPage: true });
+  await bytedancePage.close();
 });
 
 test('keeps a site disabled in global slider mode across popup and page reloads', async () => {

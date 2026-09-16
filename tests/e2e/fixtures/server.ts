@@ -6,6 +6,7 @@ const HOST = '127.0.0.1';
 
 export const fixtureHostname = 'captcha.e2e.test';
 export const fixtureOrigin = `http://${fixtureHostname}`;
+export const fixtureFrameOrigin = 'http://captcha-frame.e2e.test';
 
 const pages = new Map([
   ['/automatic.html', new URL('./automatic.html', import.meta.url)],
@@ -13,6 +14,8 @@ const pages = new Map([
   ['/ambiguous.html', new URL('./ambiguous.html', import.meta.url)],
   ['/slider.html', new URL('./slider.html', import.meta.url)],
   ['/aliyun-slider.html', new URL('./aliyun-slider.html', import.meta.url)],
+  ['/bytedance-frame.html', new URL('./bytedance-frame.html', import.meta.url)],
+  ['/bytedance-slider-challenge.html', new URL('./bytedance-slider-challenge.html', import.meta.url)],
   ['/guide.html', new URL('./guide.html', import.meta.url)],
   ['/binding.html', new URL('./binding.html', import.meta.url)],
   ['/search.html', new URL('./search.html', import.meta.url)],

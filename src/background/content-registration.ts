@@ -11,6 +11,7 @@ export interface RegisteredContentScript {
   matches: readonly string[];
   js: readonly string[];
   persistAcrossSessions?: boolean;
+  allFrames?: boolean;
 }
 
 export interface ContentRegistrationAdapter {
@@ -24,7 +25,7 @@ export interface ContentRegistrationAdapter {
     getRegisteredContentScripts(): Promise<readonly RegisteredContentScript[]>;
     registerContentScripts(scripts: readonly Required<RegisteredContentScript>[]): Promise<void>;
     unregisterContentScripts(details: { ids: readonly string[] }): Promise<void>;
-    executeScript(details: { target: { tabId: number; frameIds?: readonly number[] }; files: readonly string[] }): Promise<unknown>;
+    executeScript(details: { target: { tabId: number; frameIds?: readonly number[]; allFrames?: boolean }; files: readonly string[] }): Promise<unknown>;
   };
   tabs: {
     query(details: { url: readonly string[] }): Promise<readonly { id?: number; url?: string }[]>;
@@ -55,11 +56,11 @@ export async function contentScriptRegistrationId(hostname: string, includeSubdo
 }
 
 function globalScript(): Required<RegisteredContentScript> {
-  return { id: GLOBAL_REGISTRATION_ID, matches: [...GLOBAL_HTTP_ORIGINS], js: [CONTENT_SCRIPT_FILE], persistAcrossSessions: true };
+  return { id: GLOBAL_REGISTRATION_ID, matches: [...GLOBAL_HTTP_ORIGINS], js: [CONTENT_SCRIPT_FILE], persistAcrossSessions: true, allFrames: true };
 }
 
 function globalSliderScript(): Required<RegisteredContentScript> {
-  return { id: GLOBAL_SLIDER_REGISTRATION_ID, matches: [...GLOBAL_HTTP_ORIGINS], js: [CONTENT_SCRIPT_FILE], persistAcrossSessions: true };
+  return { id: GLOBAL_SLIDER_REGISTRATION_ID, matches: [...GLOBAL_HTTP_ORIGINS], js: [CONTENT_SCRIPT_FILE], persistAcrossSessions: true, allFrames: true };
 }
 
 async function selectedScript(rule: SelectedSiteRule): Promise<Required<RegisteredContentScript>> {
@@ -68,21 +69,14 @@ async function selectedScript(rule: SelectedSiteRule): Promise<Required<Register
     matches: [...originsForSelectedSite(rule)],
     js: [CONTENT_SCRIPT_FILE],
     persistAcrossSessions: true,
-  };
-}
-
-async function exactSliderScript(hostname: string): Promise<Required<RegisteredContentScript>> {
-  return {
-    id: await contentScriptRegistrationId(hostname),
-    matches: [...exactOrigins(hostname)],
-    js: [CONTENT_SCRIPT_FILE],
-    persistAcrossSessions: true,
+    allFrames: true,
   };
 }
 
 function isSameScript(actual: RegisteredContentScript, expected: Required<RegisteredContentScript>): boolean {
   return actual.id === expected.id
     && actual.persistAcrossSessions === true
+    && actual.allFrames === true
     && actual.matches.length === expected.matches.length
     && actual.matches.every((match, index) => match === expected.matches[index])
     && actual.js.length === expected.js.length
@@ -98,7 +92,7 @@ async function notifyTabs(adapter: ContentRegistrationAdapter, hostname: string,
     } catch {
       if (type !== 'captcha:auto-enable') return;
     }
-    try { await adapter.scripting.executeScript({ target: { tabId: tab.id }, files: [CONTENT_SCRIPT_FILE] }); } catch { return; }
+    try { await adapter.scripting.executeScript({ target: { tabId: tab.id, allFrames: true }, files: [CONTENT_SCRIPT_FILE] }); } catch { return; }
     try { await adapter.tabs.sendMessage(tab.id, { type }); } catch { /* The injected client may still be initializing. */ }
   }));
 }
@@ -128,6 +122,7 @@ export function createContentRegistration(adapter: ContentRegistrationAdapter): 
       }
       const sliderGlobalAccess = settings.sliderAccessMode === 'all' && await adapter.permissions.contains({ origins: GLOBAL_HTTP_ORIGINS });
       if (sliderGlobalAccess && !globalAccess) desired.push(globalSliderScript());
+      let selectedSliderAccess = false;
       for (const hostname of settings.sliderEnabledHosts) {
         if (globalAccess || sliderGlobalAccess) continue;
         let coveredBySelectedSite = false;
@@ -142,10 +137,14 @@ export function createContentRegistration(adapter: ContentRegistrationAdapter): 
             } catch { /* An unavailable rule does not cover the slider host. */ }
           }
         }
-        if (coveredBySelectedSite) continue;
+        if (coveredBySelectedSite) {
+          selectedSliderAccess = true;
+          continue;
+        }
         const origins = exactOrigins(hostname);
-        if (await adapter.permissions.contains({ origins })) desired.push(await exactSliderScript(hostname));
+        if (await adapter.permissions.contains({ origins })) selectedSliderAccess = true;
       }
+      if (selectedSliderAccess && !sliderGlobalAccess && !globalAccess) desired.push(globalSliderScript());
       const uniqueDesired = [...new Map(desired.map((script) => [script.id, script])).values()];
       const current = await adapter.scripting.getRegisteredContentScripts();
       const kept = new Set<string>();

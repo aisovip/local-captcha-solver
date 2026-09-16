@@ -30,9 +30,9 @@ interface BackgroundBrowser {
   };
   scripting: {
     getRegisteredContentScripts(): Promise<readonly { id: string; matches: readonly string[]; js: readonly string[]; persistAcrossSessions?: boolean }[]>;
-    registerContentScripts(scripts: readonly { id: string; matches: readonly string[]; js: readonly string[]; persistAcrossSessions: boolean }[]): Promise<void>;
+    registerContentScripts(scripts: readonly { id: string; matches: readonly string[]; js: readonly string[]; persistAcrossSessions: boolean; allFrames: boolean }[]): Promise<void>;
     unregisterContentScripts(details: { ids: readonly string[] }): Promise<void>;
-    executeScript(details: { target: { tabId: number; frameIds?: readonly number[] }; files: readonly string[] }): Promise<unknown>;
+    executeScript(details: { target: { tabId: number; frameIds?: readonly number[]; allFrames?: boolean }; files: readonly string[] }): Promise<unknown>;
   };
   tabs: {
     query(details: { url?: readonly string[]; active?: boolean; currentWindow?: boolean }): Promise<readonly { id?: number; url?: string; windowId?: number }[]>;
@@ -60,7 +60,7 @@ interface BackgroundBrowser {
   };
   runtime: {
     onMessage: {
-      addListener(listener: (message: unknown, sender: { tab?: { id?: number; url?: string; windowId?: number }; url?: string }, sendResponse?: (response: unknown) => void) => Promise<unknown | undefined> | boolean | void): void;
+      addListener(listener: (message: unknown, sender: { tab?: { id?: number; url?: string; windowId?: number }; url?: string; frameId?: number }, sendResponse?: (response: unknown) => void) => Promise<unknown | undefined> | boolean | void): void;
     };
     onStartup: { addListener(listener: () => void): void };
     onInstalled: { addListener(listener: (details: { reason: string; previousVersion?: string }) => void): void };
@@ -113,7 +113,7 @@ export default defineBackground(() => {
     settings,
     permissions: { contains: extension.permissions.contains.bind(extension.permissions) },
     tabs: {
-      sendMessage: (tabId, message) => extension.tabs.sendMessage(tabId, message),
+      sendMessage: (tabId, message, options) => extension.tabs.sendMessage(tabId, message, options),
     },
     debugger: extension.debugger,
     decodeImage: decodeScreenshot,

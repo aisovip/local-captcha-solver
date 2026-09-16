@@ -58,8 +58,9 @@ function harness(options: { granted?: boolean; enabled?: boolean; recentUserInpu
   let discoveries = 0;
   let inputEvents = 0;
   let outcomeChecks = 0;
-  const sendMessage = vi.fn(async (_tabId: number, message: unknown) => {
+  const sendMessage = vi.fn(async (_tabId: number, message: unknown, _target?: { frameId: number }) => {
     const type = (message as { type?: string }).type;
+    if (type === 'captcha:slider-frame-offset') return { x: 10, y: 0, viewportWidth: 260, viewportHeight: 170 };
     if (type === 'captcha:slider-user-active') return { active: options.userActiveAfterInputEvents !== undefined && inputEvents >= options.userActiveAfterInputEvents };
     if (type === 'captcha:slider-discover') {
       discoveries += 1;
@@ -140,6 +141,22 @@ describe('slider solver', () => {
     expect(app.sendCommand.mock.calls.at(0)?.[1]).toBe('Page.captureScreenshot');
     expect(app.sendCommand.mock.calls.some((call) => call[1] === 'Input.dispatchMouseEvent')).toBe(true);
     expect(app.sendCommand.mock.calls.at(-1)?.[2]).toMatchObject({ type: 'mouseReleased', button: 'left', buttons: 0 });
+  });
+
+  it('targets a cross-origin frame and translates its geometry to the top viewport', async () => {
+    const app = harness();
+    const result = await app.solver.solve({
+      id: 7,
+      url: 'https://www.trae.cn/login',
+      frameId: 9,
+      frameUrl: 'https://rmc.bytedance.com/verifycenter/captcha/v2?token=secret',
+    }, 'automatic');
+
+    expect(result).toMatchObject({
+      state: 'success',
+      diagnostic: { frameId: 9, frameSite: 'https://rmc.bytedance.com/verifycenter/captcha/v2?token=secret', startX: 29 },
+    });
+    expect(app.sendCommand.mock.calls.some((call) => call[1] === 'Input.dispatchMouseEvent' && (call[2] as { x?: number }).x === 29)).toBe(true);
   });
 
   it('treats a stably removed challenge as successful without provider-specific markup', async () => {

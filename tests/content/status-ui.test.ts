@@ -71,6 +71,8 @@ describe('status UI', () => {
     showSliderStatus({ state: 'running' });
     expect(shadow()?.textContent).toContain('Captcha Helper 正在接管滑块');
     expect(host()?.dataset.presentation).toBe('toast');
+    expect(shadow()?.querySelector('[data-status-kind="slider"]')?.getAttribute('data-non-interactive')).toBe('true');
+    expect((shadow()?.querySelector('.close') as HTMLButtonElement).hidden).toBe(true);
     await vi.advanceTimersByTimeAsync(5000);
     expect(host()).not.toBeNull();
 

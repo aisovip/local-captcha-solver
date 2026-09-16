@@ -400,7 +400,7 @@ export function showSliderStatus(result: SliderRunResult | { state: 'running' })
   const tone: StatusTone = state === 'running' ? 'running' : state === 'success' ? 'success' : warningStates.includes(state as SliderResultState) ? 'warning' : 'error';
   const timeoutMs = state === 'running' ? 0 : state === 'success' ? 2400 : state === 'permission-denied' ? 5000 : state === 'user-active' ? 0 : 4000;
   const anchor = visibleSliderTarget();
-  show(message, anchor, tone, [], { detail, timeoutMs, presentation: userActive ? 'panel' : 'toast', nonInteractive: userActive, statusKind: userActive ? 'slider-user-active' : 'slider' });
+  show(message, anchor, tone, [], { detail, timeoutMs, presentation: userActive ? 'panel' : 'toast', nonInteractive: true, statusKind: userActive ? 'slider-user-active' : 'slider' });
   if (userActive) highlightSlider();
 }
 

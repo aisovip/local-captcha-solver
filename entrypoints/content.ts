@@ -43,6 +43,8 @@ function localeFromSettings(value: unknown, browserLanguage: string): UiLocale {
 }
 const AUTOMATIC_MODES: readonly RecognitionMode[] = ['digits', 'letters', 'alphanumeric', 'arithmetic'];
 const SLIDER_USER_INPUT_COOLDOWN_MS = 1200;
+const CAPTCHA_FRAME_URL_PATTERN = /captcha|verify|verification|challenge|security/i;
+function isCaptchaFrameUrl(value: string): boolean { return CAPTCHA_FRAME_URL_PATTERN.test(value); }
 function modesFromSettings(value: unknown): readonly RecognitionMode[] {
   try {
     const mode = recognitionModeFromSettings(value, location.href);
@@ -78,6 +80,8 @@ function imageSourceSummary(image: HTMLImageElement): string {
   } catch { return '页面图片'; }
 }
 export function createRuntimeContent(runtime: Runtime) {
+  const topFrame = window === window.top;
+  const frameHasFocus = (): boolean => topFrame ? document.hasFocus() : document.visibilityState === 'visible';
   let bindings: CaptchaBinding[] = [];
   let bindingsReady = runtime.bindings === undefined;
   let loadBindings = Promise.resolve();
@@ -97,6 +101,7 @@ export function createRuntimeContent(runtime: Runtime) {
   let sliderAutomaticEnabled = false;
   let lastSliderAttempt: string | undefined;
   let observedSliderCandidate: string | undefined;
+  let lastSliderDiscoveryDiagnostic: string | undefined;
   let sliderRunGeneration: number | undefined;
   let settledSliderChallenge: { keys: readonly string[]; state: 'success' | 'rejected'; observedAbsent: boolean } | undefined;
   let automationPointerPressArmedUntil = 0;
@@ -297,7 +302,7 @@ export function createRuntimeContent(runtime: Runtime) {
   let recognitionShortcut: RecognitionShortcut = 'middle';
   let shortcutGeneration = 0;
   const initialShortcutGeneration = shortcutGeneration;
-  void runtime.settings?.read().then((settings) => {
+  void runtime.settings?.read().then(async (settings) => {
     if (shortcutGeneration === initialShortcutGeneration) {
       recognitionShortcut = shortcutFromSettings(settings);
       autoFillEnabled = autoFillFromSettings(settings);
@@ -305,7 +310,10 @@ export function createRuntimeContent(runtime: Runtime) {
       uiLocale = localeFromSettings(settings, runtime.uiLanguage ?? 'zh-CN');
       text = CONTENT_TEXT[uiLocale];
       setStatusUiLocale(uiLocale);
-      sliderAutomaticEnabled = sliderEnabledFromSettings(settings, location.href);
+      sliderAutomaticEnabled = topFrame
+        ? sliderEnabledFromSettings(settings, location.href)
+        : (await runtime.sendMessage({ type: 'captcha:get-slider-frame-state' }).catch(() => undefined) as { enabled?: unknown } | undefined)?.enabled === true;
+      if (shortcutGeneration !== initialShortcutGeneration) return;
       if (sliderAutomaticEnabled) startSliderObserver();
     }
   }).catch(() => undefined);
@@ -323,26 +331,32 @@ export function createRuntimeContent(runtime: Runtime) {
     uiLocale = localeFromSettings(settings, runtime.uiLanguage ?? 'zh-CN');
     text = CONTENT_TEXT[uiLocale];
     setStatusUiLocale(uiLocale);
-    const nextSliderEnabled = sliderEnabledFromSettings(settings, location.href);
-    if (nextSliderEnabled !== sliderAutomaticEnabled) sliderGeneration += 1;
-    sliderAutomaticEnabled = nextSliderEnabled;
-    if (sliderAutomaticEnabled) startSliderObserver();
-    else {
-      sliderObserver?.disconnect();
-      sliderObserver = undefined;
-      if (sliderTimer !== undefined) clearTimeout(sliderTimer);
-      sliderTimer = undefined;
-      lastSliderAttempt = undefined;
-      observedSliderCandidate = undefined;
-      sliderRunGeneration = undefined;
-      sliderRetryAfterUserActivity = false;
-      sliderInterruptedByUser = false;
-      settledSliderChallenge = undefined;
-      automationPointerPressArmedUntil = 0;
-      if (sliderUserActivityTimer !== undefined) clearTimeout(sliderUserActivityTimer);
-      sliderUserActivityTimer = undefined;
-      clearSliderStatus();
-    }
+    void (async () => {
+      const nextSliderEnabled = topFrame
+        ? sliderEnabledFromSettings(settings, location.href)
+        : (await runtime.sendMessage({ type: 'captcha:get-slider-frame-state' }).catch(() => undefined) as { enabled?: unknown } | undefined)?.enabled === true;
+      if (settingsGeneration !== shortcutGeneration) return;
+      if (nextSliderEnabled !== sliderAutomaticEnabled) sliderGeneration += 1;
+      sliderAutomaticEnabled = nextSliderEnabled;
+      if (sliderAutomaticEnabled) startSliderObserver();
+      else {
+        sliderObserver?.disconnect();
+        sliderObserver = undefined;
+        if (sliderTimer !== undefined) clearTimeout(sliderTimer);
+        sliderTimer = undefined;
+        lastSliderAttempt = undefined;
+        observedSliderCandidate = undefined;
+        lastSliderDiscoveryDiagnostic = undefined;
+        sliderRunGeneration = undefined;
+        sliderRetryAfterUserActivity = false;
+        sliderInterruptedByUser = false;
+        settledSliderChallenge = undefined;
+        automationPointerPressArmedUntil = 0;
+        if (sliderUserActivityTimer !== undefined) clearTimeout(sliderUserActivityTimer);
+        sliderUserActivityTimer = undefined;
+        clearSliderStatus();
+      }
+    })();
   });
   const documentWithShortcut = document as Document & { __localCaptchaShortcutCleanup?: () => void };
   documentWithShortcut.__localCaptchaShortcutCleanup?.();
@@ -555,8 +569,29 @@ export function createRuntimeContent(runtime: Runtime) {
       if (bindingPicker || !bindingsReady) return Promise.resolve({ state: 'not-found' });
       return discoverSlider().then((discovery) => {
         if (discovery.state !== 'ready' && discovery.state !== 'activatable') return discovery;
-        return { ...discovery, recentUserInput: Date.now() - lastUserInputAt < SLIDER_USER_INPUT_COOLDOWN_MS, pageVisible: document.visibilityState === 'visible', pageFocused: document.hasFocus() };
+        return { ...discovery, recentUserInput: Date.now() - lastUserInputAt < SLIDER_USER_INPUT_COOLDOWN_MS, pageVisible: document.visibilityState === 'visible', pageFocused: frameHasFocus() };
       });
+    }
+    if (type === 'captcha:slider-frame-offset' && topFrame) {
+      const frameUrl = (message as { frameUrl?: unknown }).frameUrl;
+      if (typeof frameUrl !== 'string') return Promise.resolve(undefined);
+      let target: URL;
+      try { target = new URL(frameUrl); } catch { return Promise.resolve(undefined); }
+      const visibleFrames = [...document.querySelectorAll('iframe')].flatMap((frame) => {
+        const rect = frame.getBoundingClientRect();
+        if (rect.width < 1 || rect.height < 1 || rect.right <= 0 || rect.bottom <= 0 || rect.left >= innerWidth || rect.top >= innerHeight) return [];
+        try {
+          const source = new URL(frame.src, location.href);
+          return [{ frame, source }];
+        } catch { return []; }
+      });
+      const targetUrl = target.href.split('#', 1)[0];
+      const exactMatches = visibleFrames.filter(({ source }) => source.href.split('#', 1)[0] === targetUrl);
+      const candidates = exactMatches.length > 0 ? exactMatches : visibleFrames.filter(({ source }) => source.origin === target.origin);
+      if (candidates.length !== 1) return Promise.resolve(undefined);
+      const frame = candidates[0]!.frame;
+      const rect = frame.getBoundingClientRect();
+      return Promise.resolve({ x: rect.left + frame.clientLeft, y: rect.top + frame.clientTop, viewportWidth: innerWidth, viewportHeight: innerHeight });
     }
     if (type === 'captcha:slider-presence') {
       return discoverSlider().then((discovery) => ({ present: discovery.state === 'ready' || discovery.state === 'activatable' }));
@@ -584,7 +619,7 @@ export function createRuntimeContent(runtime: Runtime) {
   void Promise.resolve(runtime.sendMessage({ type: 'captcha:get-site-state' })).then((state) => { if (isSiteState(state) && state.enabled && lifecycleGeneration === initialGeneration) enable(); }).catch(() => undefined);
   const scanSlider = async (): Promise<void> => {
     sliderTimer = undefined;
-    if (!sliderAutomaticEnabled || bindingPicker || !bindingsReady || sliderRunGeneration !== undefined || document.visibilityState !== 'visible' || !document.hasFocus()) return;
+    if (!sliderAutomaticEnabled || bindingPicker || !bindingsReady || sliderRunGeneration !== undefined || document.visibilityState !== 'visible' || !frameHasFocus()) return;
     const generation = sliderGeneration;
     const userCooldown = SLIDER_USER_INPUT_COOLDOWN_MS - (Date.now() - lastUserInputAt);
     if (userCooldown > 0) {
@@ -593,7 +628,19 @@ export function createRuntimeContent(runtime: Runtime) {
     }
     const discovery = await discoverSlider();
     if (generation !== sliderGeneration || !sliderAutomaticEnabled) return;
-    if (document.visibilityState !== 'visible' || !document.hasFocus()) return;
+    if (document.visibilityState !== 'visible' || !frameHasFocus()) return;
+    const discoveryDiagnostic = discovery.state === 'ambiguous' ? 'ambiguous-candidates'
+      : discovery.state === 'unsupported' ? 'unsupported-structure'
+        : !topFrame && isCaptchaFrameUrl(location.href) && discovery.state === 'not-found' ? 'no-supported-structure'
+          : undefined;
+    if (discoveryDiagnostic !== undefined && discoveryDiagnostic !== lastSliderDiscoveryDiagnostic) {
+      lastSliderDiscoveryDiagnostic = discoveryDiagnostic;
+      void runtime.sendMessage({
+        type: 'captcha:record-slider-diagnostic',
+        outcome: discovery.state === 'not-found' ? 'not-found' : 'unsupported',
+        diagnostic: { reason: discoveryDiagnostic },
+      }).catch(() => undefined);
+    } else if (discoveryDiagnostic === undefined) lastSliderDiscoveryDiagnostic = undefined;
     const cooldownAfterDiscovery = SLIDER_USER_INPUT_COOLDOWN_MS - (Date.now() - lastUserInputAt);
     if (cooldownAfterDiscovery > 0) {
       sliderTimer = setTimeout(() => { void scanSlider(); }, cooldownAfterDiscovery);
@@ -680,6 +727,7 @@ export function createRuntimeContent(runtime: Runtime) {
     observer = undefined;
     lastSliderAttempt = undefined;
     observedSliderCandidate = undefined;
+    lastSliderDiscoveryDiagnostic = undefined;
     settledSliderChallenge = undefined;
     if (automaticEnabled) enable();
     startSliderObserver();
@@ -698,7 +746,7 @@ export default defineContentScript({ matches: [], registration: 'runtime', main(
   if (runtimeState.__localCaptchaContentRuntimeStarted) return;
   runtimeState.__localCaptchaContentRuntimeStarted = true;
   const runtime = browser.runtime;
-  createRuntimeContent({
+  const content = createRuntimeContent({
     sendMessage: (message) => sendRuntimeMessage(runtime, message),
     onMessage: runtime.onMessage,
     uiLanguage: browser.i18n.getUILanguage(),
@@ -723,4 +771,8 @@ export default defineContentScript({ matches: [], registration: 'runtime', main(
       },
     },
   });
+  if (window !== window.top && isCaptchaFrameUrl(location.href)) {
+    void sendRuntimeMessage(runtime, { type: 'captcha:register-slider-frame' }).catch(() => undefined);
+  }
+  return content;
 } });

@@ -96,6 +96,15 @@ function senderPage(sender: RuntimeSender): string | undefined {
   return sender.url ?? tabPage;
 }
 
+function sliderFrameSender(sender: RuntimeSender): { tabId: number; pageUrl: string; windowId?: number; frameId: number; frameUrl: string } | undefined {
+  if (sender.tab?.id === undefined || sender.tab.url === undefined || sender.frameId === undefined || sender.frameId === 0 || sender.url === undefined) return undefined;
+  try {
+    hostnameForPage(sender.tab.url);
+    hostnameForPage(sender.url);
+    return { tabId: sender.tab.id, pageUrl: sender.tab.url, windowId: sender.tab.windowId, frameId: sender.frameId, frameUrl: sender.url };
+  } catch { return undefined; }
+}
+
 function isExtensionDocumentUrl(value: unknown): boolean {
   if (typeof value !== 'string') return false;
   try {
@@ -147,6 +156,7 @@ export function createRuntimeRouter(adapter: RuntimeRouterAdapter): RuntimeRoute
 
   const sliderActivities = new Map<number, TrackedSliderActivity>();
   const sliderRuns = new Map<number, Promise<SliderRunResult>>();
+  const sliderFrames = new Map<number, { frameId: number; frameUrl: string; pageUrl: string; at: number }>();
   const sliderActivityLifetimeMs = { running: 30_000, terminal: 120_000 } as const;
   let sliderRunGeneration = 0;
   const startWarmup = (): void => {
@@ -169,7 +179,7 @@ export function createRuntimeRouter(adapter: RuntimeRouterAdapter): RuntimeRoute
     return visible;
   };
   const executeSlider = async (
-    tab: { id: number; url: string; windowId?: number },
+    tab: { id: number; url: string; windowId?: number; frameId?: number; frameUrl?: string },
     trigger: 'manual' | 'automatic',
     expectedRevision?: string,
   ): Promise<SliderRunResult> => {
@@ -198,7 +208,7 @@ export function createRuntimeRouter(adapter: RuntimeRouterAdapter): RuntimeRoute
     return result;
   };
   const runSlider = (
-    tab: { id: number; url: string; windowId?: number },
+    tab: { id: number; url: string; windowId?: number; frameId?: number; frameUrl?: string },
     trigger: 'manual' | 'automatic',
     expectedRevision?: string,
   ): Promise<SliderRunResult> => {
@@ -217,6 +227,35 @@ export function createRuntimeRouter(adapter: RuntimeRouterAdapter): RuntimeRoute
     async handle(message: unknown, sender: RuntimeSender): Promise<unknown | undefined> {
       if (message === null || typeof message !== 'object' || !('type' in message)) return undefined;
       const request = message as { type?: unknown; area?: unknown; tabId?: unknown; pageUrl?: unknown; requestId?: unknown; scope?: unknown; url?: unknown; imageDataUrl?: unknown; revision?: unknown; modes?: unknown; enabled?: unknown; hostname?: unknown; permissionAlreadyGranted?: unknown; copyOnNoField?: unknown; autoFill?: unknown; recognitionShortcut?: unknown; outcome?: unknown; diagnostic?: unknown; trigger?: unknown; binding?: unknown; kind?: unknown };
+      if (request.type === 'captcha:register-slider-frame') {
+        const frame = sliderFrameSender(sender);
+        if (frame === undefined) return { registered: false };
+        sliderFrames.set(frame.tabId, { frameId: frame.frameId, frameUrl: frame.frameUrl, pageUrl: frame.pageUrl, at: Date.now() });
+        return { registered: true };
+      }
+      if (request.type === 'captcha:get-slider-frame-state') {
+        const frame = sliderFrameSender(sender);
+        if (frame === undefined || adapter.sliderSolver === undefined) return { supported: false, enabled: false };
+        return { supported: true, enabled: await adapter.settings?.isSliderEnabled?.(frame.pageUrl) ?? false };
+      }
+      if (request.type === 'captcha:record-slider-diagnostic') {
+        const frame = sliderFrameSender(sender);
+        const page = senderPage(sender) ?? frame?.pageUrl;
+        const state = request.outcome === 'not-found' || request.outcome === 'unsupported' ? request.outcome : undefined;
+        if (page === undefined || state === undefined) return { recorded: false };
+        adapter.modelStatus.sliderCompleted({
+          site: hostnameForPage(page),
+          trigger: 'automatic',
+          state,
+          phase: 'discovery',
+          reason: typeof request.diagnostic === 'object' && request.diagnostic !== null && typeof (request.diagnostic as { reason?: unknown }).reason === 'string'
+            ? (request.diagnostic as { reason: string }).reason
+            : undefined,
+          ...(frame === undefined ? {} : { frameId: frame.frameId, frameSite: frame.frameUrl }),
+          durationMs: 0,
+        });
+        return { recorded: true };
+      }
       if (request.type === 'captcha:cancel-slider') {
         if (senderPage(sender) === undefined || sender.tab?.id === undefined || (sender.frameId ?? 0) !== 0) return { cancelled: false };
         adapter.sliderSolver?.cancel?.(sender.tab.id);
@@ -282,12 +321,19 @@ export function createRuntimeRouter(adapter: RuntimeRouterAdapter): RuntimeRoute
         if (pageOriginPermission === undefined || !await adapter.permissions.contains({ origins: [pageOriginPermission] })) return { state: 'permission-denied', reason: 'site-access-not-granted' };
         const currentTab = await adapter.activeTab();
         if (currentTab?.id !== tab.id || currentTab.url !== tab.url) return { state: 'page-inactive', reason: 'page-changed' };
-        return runSlider({ id: tab.id, url: tab.url, windowId: tab.windowId }, 'manual');
+        const frame = sliderFrames.get(tab.id);
+        const recentFrame = frame !== undefined && frame.pageUrl === tab.url && Date.now() - frame.at < 120_000 ? frame : undefined;
+        return runSlider({ id: tab.id, url: tab.url, windowId: tab.windowId, ...(recentFrame === undefined ? {} : { frameId: recentFrame.frameId, frameUrl: recentFrame.frameUrl }) }, 'manual');
       }
       if (request.type === 'captcha:slider-auto-run') {
+        const frame = sliderFrameSender(sender);
         const page = senderPage(sender);
-        if (page === undefined || sender.tab?.id === undefined || adapter.sliderSolver === undefined || typeof request.revision !== 'string') return { state: 'permission-denied', reason: 'untrusted-sender' };
-        return runSlider({ id: sender.tab.id, url: sender.tab.url ?? page, windowId: sender.tab.windowId }, 'automatic', request.revision);
+        if (adapter.sliderSolver === undefined || typeof request.revision !== 'string' || (frame === undefined && (page === undefined || sender.tab?.id === undefined))) return { state: 'permission-denied', reason: 'untrusted-sender' };
+        if (frame !== undefined) {
+          sliderFrames.set(frame.tabId, { frameId: frame.frameId, frameUrl: frame.frameUrl, pageUrl: frame.pageUrl, at: Date.now() });
+          return runSlider({ id: frame.tabId, url: frame.pageUrl, windowId: frame.windowId, frameId: frame.frameId, frameUrl: frame.frameUrl }, 'automatic', request.revision);
+        }
+        return runSlider({ id: sender.tab!.id!, url: sender.tab!.url ?? page!, windowId: sender.tab!.windowId }, 'automatic', request.revision);
       }
       if (request.type === 'captcha:get-preferences') {
         const settings = await adapter.settings?.read();

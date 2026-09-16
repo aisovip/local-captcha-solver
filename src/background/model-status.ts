@@ -75,7 +75,7 @@ export interface ModelStatusStore {
 type Listener = (snapshot: ModelStatusSnapshot) => void;
 
 export const MODEL_LOGS_STORAGE_KEY = 'captcha-diagnostic-logs';
-const MAX_LOGS = 20;
+const MAX_LOGS = 50;
 const MAX_TEXT_LENGTH = 500;
 const LOADING_MESSAGE = '正在加载本地识别模型';
 const READY_MESSAGE = '本地识别模型已就绪';
@@ -119,7 +119,7 @@ function sanitizeContext(context: DiagnosticContext = {}): DiagnosticContext {
   const binding = parseBindingDiagnostic(context.binding);
   const trigger = context.trigger === 'automatic' || context.trigger === 'manual' || context.trigger === 'explicit' || context.trigger === 'context' ? context.trigger : undefined;
   const match = context.match === 'unique' || context.match === 'ambiguous' || context.match === 'none' ? context.match : undefined;
-  const provider: SliderProvider | undefined = context.provider === 'aliyun' || context.provider === 'geetest' || context.provider === 'geetest-v4' || context.provider === 'generic' ? context.provider : undefined;
+  const provider: SliderProvider | undefined = context.provider === 'aliyun' || context.provider === 'bytedance' || context.provider === 'geetest' || context.provider === 'geetest-v4' || context.provider === 'generic' ? context.provider : undefined;
   const imageSource: SliderImageSource | undefined = context.imageSource === 'paired-background' || context.imageSource === 'background' || context.imageSource === 'viewport' ? context.imageSource : undefined;
   const localizationMethod: SliderLocalizationMethod | undefined = context.localizationMethod === 'reference-difference' || context.localizationMethod === 'texture' || context.localizationMethod === 'shape' || context.localizationMethod === 'geometry' || context.localizationMethod === 'edge-perimeter' ? context.localizationMethod : undefined;
   const phase: SliderDiagnosticPhase | undefined = context.phase === 'discovery' || context.phase === 'activation' || context.phase === 'localization' || context.phase === 'execution' || context.phase === 'outcome' ? context.phase : undefined;
@@ -131,6 +131,8 @@ function sanitizeContext(context: DiagnosticContext = {}): DiagnosticContext {
   const candidateId = cleanText(context.candidateId, 80);
   const attemptId = cleanText(context.attemptId, 40);
   const challengeId = cleanText(context.challengeId, 40);
+  const frameSite = cleanSite(context.frameSite);
+  const frameId = finiteNumber(context.frameId, 0, 100_000);
   const width = dimension(context.width);
   const height = dimension(context.height);
   const source = cleanSource(context.source);
@@ -157,6 +159,8 @@ function sanitizeContext(context: DiagnosticContext = {}): DiagnosticContext {
     ...(provider === undefined ? {} : { provider }),
     ...(attemptId === undefined ? {} : { attemptId }),
     ...(challengeId === undefined ? {} : { challengeId }),
+    ...(frameSite === undefined ? {} : { frameSite }),
+    ...(frameId === undefined ? {} : { frameId }),
     ...(phase === undefined ? {} : { phase }),
     ...(imageSource === undefined ? {} : { imageSource }),
     ...(localizationMethod === undefined ? {} : { localizationMethod }),

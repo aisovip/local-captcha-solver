@@ -100,6 +100,8 @@ const PIECE_HINT_SELECTORS = [
   '[class*="jigsaw"]',
   '[class*="slice"]',
   '[class*="puzzle"]',
+  '[id*="img_slide"]',
+  '[class*="image__slide"]',
 ];
 
 const ACTIVATOR_CANDIDATE_SELECTORS = [
@@ -117,7 +119,7 @@ const HANDLE_SEMANTIC_PATTERN = /(^|[-_\s])(slider|slide|drag|handle|thumb)([-_\
 const HANDLE_CONTROL_PATTERN = /(^|[-_\s])(handle|thumb|button|btn)([-_\s]|$)/i;
 const NON_HANDLE_LAYER_PATTERN = /(^|[-_\s])(indicator|progress|fill|track|rail)([-_\s]|$)/i;
 const TRACK_SEMANTIC_PATTERN = /(^|[-_\s])(track|rail|control|bar|slider|sliding|slide|drag)([-_\s]|$)/i;
-const PIECE_SEMANTIC_PATTERN = /(^|[-_\s])(piece|jigsaw|slice|puzzle)([-_\s]|$)/i;
+const PIECE_SEMANTIC_PATTERN = /(^|[-_\s])(piece|jigsaw|slice|puzzle)([-_\s]|$)|img[-_]+slide|image[-_]+slide/i;
 const ACTIVATION_ACTION_PATTERN = /(^|[^a-z0-9])(verify|verification|slide|drag|swipe|radar)(?=$|[^a-z0-9])|验证|校验|滑动|拖动/i;
 const INACTIVE_CONTROL_PATTERN = /(^|[-_\s])(success|passed|complete|error|fail|disabled|loading|waiting|wait|verifying|freeze)([-_\s]|$)|成功|完成|失败|禁用/i;
 
@@ -353,6 +355,7 @@ async function maskForPiece(piece: { element: Element; rect: SliderRect }, image
 function providerFor(root: Element): SliderProvider {
   const value = `${root.id} ${root.className} ${root.getAttribute('data-provider') ?? ''}`.toLowerCase();
   if (value.includes('aliyun')) return 'aliyun';
+  if (/(^|\s)(vc-captcha|captcha_verify|captcha-verify)/.test(value) || root.querySelector('[class*="captcha-verify-image"]') !== null) return 'bytedance';
   if (!value.includes('geetest')) return 'generic';
   return root.querySelector('.geetest_canvas_bg') === null ? 'geetest-v4' : 'geetest';
 }

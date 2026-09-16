@@ -6,10 +6,10 @@ import { createSettingsStore, DEFAULT_SETTINGS, SETTINGS_STORAGE_KEY } from '../
 
 const defaults = { ...DEFAULT_SETTINGS, accessMode: 'all' as const };
 
-function harness(options: { permitted?: boolean; registrations?: readonly { id: string; matches: readonly string[]; js: readonly string[]; persistAcrossSessions?: boolean }[]; setFails?: boolean } = {}) {
+function harness(options: { permitted?: boolean; registrations?: readonly { id: string; matches: readonly string[]; js: readonly string[]; persistAcrossSessions?: boolean; allFrames?: boolean }[]; setFails?: boolean } = {}) {
   const values = new Map<string, unknown>([[SETTINGS_STORAGE_KEY, defaults]]);
   const registrations = [...(options.registrations ?? [])];
-  const registerContentScripts = vi.fn(async (scripts: readonly { id: string; matches: readonly string[]; js: readonly string[]; persistAcrossSessions: boolean }[]) => { registrations.push(...scripts); });
+  const registerContentScripts = vi.fn(async (scripts: readonly { id: string; matches: readonly string[]; js: readonly string[]; persistAcrossSessions: boolean; allFrames: boolean }[]) => { registrations.push(...scripts); });
   const unregisterContentScripts = vi.fn(async ({ ids }: { ids?: readonly string[] }) => { for (const id of ids ?? []) { let index = registrations.findIndex((script) => script.id === id); while (index >= 0) { registrations.splice(index, 1); index = registrations.findIndex((script) => script.id === id); } } });
   const executeScript = vi.fn(async () => undefined);
   const sendMessage = vi.fn(async () => undefined);
@@ -36,14 +36,14 @@ describe('content registration', () => {
   it('registers one persistent global content script after all-site access is granted', async () => {
     const app = harness();
     await app.registration.reconcile();
-    expect(app.registerContentScripts).toHaveBeenCalledWith([{ id: GLOBAL_REGISTRATION_ID, matches: [...GLOBAL_HTTP_ORIGINS], js: ['content-scripts/content.js'], persistAcrossSessions: true }]);
+    expect(app.registerContentScripts).toHaveBeenCalledWith([{ id: GLOBAL_REGISTRATION_ID, matches: [...GLOBAL_HTTP_ORIGINS], js: ['content-scripts/content.js'], persistAcrossSessions: true, allFrames: true }]);
   });
 
   it('does not register a second slider content script when global access already covers the host', async () => {
     const app = harness();
     app.values.set(SETTINGS_STORAGE_KEY, { ...defaults, sliderEnabledHosts: ['portal.example.test'] });
     await app.registration.reconcile();
-    expect(app.registerContentScripts).toHaveBeenCalledWith([{ id: GLOBAL_REGISTRATION_ID, matches: [...GLOBAL_HTTP_ORIGINS], js: ['content-scripts/content.js'], persistAcrossSessions: true }]);
+    expect(app.registerContentScripts).toHaveBeenCalledWith([{ id: GLOBAL_REGISTRATION_ID, matches: [...GLOBAL_HTTP_ORIGINS], js: ['content-scripts/content.js'], persistAcrossSessions: true, allFrames: true }]);
   });
 
   it('removes old per-site registrations and stays unregistered without global access', async () => {
@@ -71,7 +71,7 @@ describe('content registration', () => {
   });
 
   it('disables a host without removing global registration or browser permission', async () => {
-    const app = harness({ registrations: [{ id: GLOBAL_REGISTRATION_ID, matches: [...GLOBAL_HTTP_ORIGINS], js: ['content-scripts/content.js'], persistAcrossSessions: true }] });
+    const app = harness({ registrations: [{ id: GLOBAL_REGISTRATION_ID, matches: [...GLOBAL_HTTP_ORIGINS], js: ['content-scripts/content.js'], persistAcrossSessions: true, allFrames: true }] });
     await expect(app.registration.disablePage('https://portal.example.test/login')).resolves.toEqual({ disabled: true, permissionRemoved: false });
     expect(app.values.get(SETTINGS_STORAGE_KEY)).toEqual({ ...defaults, disabledHosts: ['portal.example.test'] });
     expect(app.unregisterContentScripts).not.toHaveBeenCalled();
@@ -80,7 +80,7 @@ describe('content registration', () => {
   });
 
   it('re-enables a disabled host without duplicating the global registration', async () => {
-    const script = { id: GLOBAL_REGISTRATION_ID, matches: [...GLOBAL_HTTP_ORIGINS], js: ['content-scripts/content.js'], persistAcrossSessions: true };
+    const script = { id: GLOBAL_REGISTRATION_ID, matches: [...GLOBAL_HTTP_ORIGINS], js: ['content-scripts/content.js'], persistAcrossSessions: true, allFrames: true };
     const app = harness({ registrations: [script] });
     app.values.set(SETTINGS_STORAGE_KEY, { ...defaults, disabledHosts: ['portal.example.test'] });
     await expect(app.registration.enablePage('https://portal.example.test/login')).resolves.toEqual({ enabled: true });
@@ -92,12 +92,12 @@ describe('content registration', () => {
     const app = harness();
     app.sendMessage.mockRejectedValueOnce(new Error('content client unavailable'));
     await expect(app.registration.enablePage('https://portal.example.test/login')).resolves.toEqual({ enabled: true });
-    expect(app.executeScript).toHaveBeenCalledWith({ target: { tabId: 7 }, files: ['content-scripts/content.js'] });
+    expect(app.executeScript).toHaveBeenCalledWith({ target: { tabId: 7, allFrames: true }, files: ['content-scripts/content.js'] });
     expect(app.sendMessage).toHaveBeenCalledTimes(2);
   });
 
   it('removes duplicate global registrations and restores one canonical script', async () => {
-    const script = { id: GLOBAL_REGISTRATION_ID, matches: [...GLOBAL_HTTP_ORIGINS], js: ['content-scripts/content.js'], persistAcrossSessions: true };
+    const script = { id: GLOBAL_REGISTRATION_ID, matches: [...GLOBAL_HTTP_ORIGINS], js: ['content-scripts/content.js'], persistAcrossSessions: true, allFrames: true };
     const app = harness({ registrations: [script, { ...script }] });
     await app.registration.reconcile();
     expect(app.unregisterContentScripts).toHaveBeenCalledWith({ ids: [GLOBAL_REGISTRATION_ID] });
@@ -126,7 +126,7 @@ describe('content registration', () => {
     expect(app.registerContentScripts.mock.calls[0]?.[0]?.[0]?.id).toBe('captcha-auto-aad516fbeda76e37');
   });
 
-  it('does not duplicate a granted selected-site content script for an enabled slider host', async () => {
+  it('adds an all-frame slider registration beside selected-site text recognition', async () => {
     const app = harness();
     app.values.set(SETTINGS_STORAGE_KEY, {
       ...defaults,
@@ -135,8 +135,10 @@ describe('content registration', () => {
       sliderEnabledHosts: ['login.portal.example.test'],
     });
     await app.registration.reconcile();
-    expect(app.registerContentScripts).toHaveBeenCalledWith([expect.objectContaining({ matches: ['http://*.portal.example.test/*', 'https://*.portal.example.test/*'] })]);
-    expect(app.registerContentScripts.mock.calls[0]?.[0]).toHaveLength(1);
+    expect(app.registerContentScripts).toHaveBeenCalledWith([
+      expect.objectContaining({ matches: ['http://*.portal.example.test/*', 'https://*.portal.example.test/*'], allFrames: true }),
+      expect.objectContaining({ id: GLOBAL_SLIDER_REGISTRATION_ID, matches: [...GLOBAL_HTTP_ORIGINS], allFrames: true }),
+    ]);
   });
 
   it('registers a separate global slider script when slider access is global but OCR access is selected', async () => {

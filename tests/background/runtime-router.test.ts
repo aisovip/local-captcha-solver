@@ -256,6 +256,43 @@ describe('background runtime router', () => {
     expect(app.contains).not.toHaveBeenCalledWith({ permissions: ['debugger'] });
   });
 
+  it('routes a registered CAPTCHA iframe through the top-level site policy', async () => {
+    const app = harness({ pagePermission: true });
+    const solve = vi.fn(async () => ({ state: 'success' as const, diagnostic: { provider: 'bytedance' as const, frameId: 9, frameSite: 'https://rmc.bytedance.com/verifycenter/captcha/v2' } }));
+    const isSliderEnabled = vi.fn(async () => true);
+    const modelStatus = createModelStatusStore(() => 1000);
+    const router = createRuntimeRouter({
+      permissions: { contains: app.contains },
+      imageCapture: { capture: app.capture },
+      inferenceHost: { recognize: app.recognize, warmup: app.warmup },
+      modelStatus,
+      siteState: { isEnabled: vi.fn(async () => false), enablePage: app.enablePage, disablePage: app.disablePage },
+      settings: { read: app.readSettings, setCopyOnNoField: app.setCopyOnNoField, setAutoFill: app.setAutoFill, setRecognitionShortcut: app.setRecognitionShortcut, isSliderEnabled },
+      sliderSolver: { solve },
+      activeTab: app.activeTab,
+    });
+    const frameSender = {
+      tab: { id: 4, windowId: 1, url: 'https://portal.example.test/login' },
+      url: 'https://rmc.bytedance.com/verifycenter/captcha/v2?token=secret',
+      frameId: 9,
+    };
+
+    await expect(router.handle({ type: 'captcha:register-slider-frame' }, frameSender)).resolves.toEqual({ registered: true });
+    await expect(router.handle({ type: 'captcha:get-slider-frame-state' }, frameSender)).resolves.toEqual({ supported: true, enabled: true });
+    await expect(router.handle({ type: 'captcha:record-slider-diagnostic', outcome: 'not-found', diagnostic: { reason: 'no-supported-structure' } }, frameSender)).resolves.toEqual({ recorded: true });
+    expect(modelStatus.snapshot().logs.at(-1)).toMatchObject({ kind: 'slider', phase: 'discovery', reason: 'no-supported-structure', site: 'portal.example.test', frameSite: 'rmc.bytedance.com', frameId: 9 });
+    await expect(router.handle({ type: 'captcha:slider-auto-run', revision: 'ready|challenge-1' }, frameSender)).resolves.toMatchObject({ state: 'success' });
+    expect(isSliderEnabled).toHaveBeenCalledWith('https://portal.example.test/login');
+    expect(solve).toHaveBeenCalledWith({
+      id: 4,
+      url: 'https://portal.example.test/login',
+      windowId: 1,
+      frameId: 9,
+      frameUrl: 'https://rmc.bytedance.com/verifycenter/captcha/v2?token=secret',
+    }, 'automatic', 'ready|challenge-1');
+    expect(modelStatus.snapshot().logs.at(-1)).toMatchObject({ kind: 'slider', provider: 'bytedance', site: 'portal.example.test', frameSite: 'rmc.bytedance.com', frameId: 9 });
+  });
+
   it('rejects manual slider execution until the active site has host permission', async () => {
     const app = harness({ pagePermission: false });
     const solve = vi.fn(async () => ({ state: 'success' as const }));

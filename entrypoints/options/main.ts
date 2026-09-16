@@ -83,6 +83,8 @@ function diagnosticDetails(log: ModelLog): string {
   if (log.kind !== 'slider') return common.filter((value): value is string => value !== undefined && value !== '').map(escapeHtml).join(' · ');
   const fields: Array<[string, string | undefined]> = [
     ['provider', log.provider],
+    ['frameSite', log.frameSite],
+    ['frameId', diagnosticNumber(log.frameId)],
     ['trigger', log.trigger],
     ['attempt', log.attemptId],
     ['challenge', log.challengeId],
@@ -131,6 +133,28 @@ function parseHostname(value: string): string {
   const url = new URL(withScheme);
   if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new Error('unsupported scheme');
   return normalizeHostname(url.hostname);
+}
+
+function diagnosticEnvironment() {
+  const userAgent = navigator.userAgent;
+  const edge = /Edg\/([\d.]+)/.exec(userAgent);
+  const chrome = /Chrome\/([\d.]+)/.exec(userAgent);
+  const firefox = /Firefox\/([\d.]+)/.exec(userAgent);
+  const gecko = /rv:([\d.]+).*Gecko\//.exec(userAgent);
+  const browser = edge ? { name: 'Microsoft Edge', version: edge[1] }
+    : firefox ? { name: 'Firefox', version: firefox[1] }
+      : chrome ? { name: 'Chrome', version: chrome[1] }
+        : { name: 'Unknown', version: undefined };
+  const engine = firefox
+    ? { name: 'Gecko', version: gecko?.[1] ?? firefox[1] }
+    : chrome ? { name: 'Blink', version: chrome[1] } : { name: 'Unknown', version: undefined };
+  return {
+    browser,
+    engine,
+    platform: navigator.platform,
+    language: navigator.language,
+    userAgent,
+  };
 }
 
 function canIncludeSubdomains(hostname: string): boolean {
@@ -547,7 +571,13 @@ export async function startOptions(
           const latest = await readModelStatus();
           if (!latest) throw new Error('Diagnostic snapshot unavailable');
           snapshot = latest;
-          const report = { extensionVersion: extension.runtime.getManifest().version, browser: navigator.userAgent, interfaceLocale: locale, ...latest };
+          const report = {
+            extension: { name: 'Captcha Helper', version: extension.runtime.getManifest().version },
+            environment: diagnosticEnvironment(),
+            interfaceLocale: locale,
+            generatedAt: new Date().toISOString(),
+            ...latest,
+          };
           await navigator.clipboard.writeText(`\`\`\`json\n${JSON.stringify(report, null, 2)}\n\`\`\``);
           button.textContent = t('copied');
         } catch { button.textContent = t('copyFailed'); }

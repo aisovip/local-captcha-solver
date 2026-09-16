@@ -15,7 +15,7 @@ export interface SliderSolverAdapter {
     contains(details: { permissions: readonly string[] }): Promise<boolean>;
   };
   tabs: {
-    sendMessage(tabId: number, message: unknown): Promise<unknown>;
+    sendMessage(tabId: number, message: unknown, options?: { frameId: number }): Promise<unknown>;
   };
   debugger: {
     attach(target: { tabId: number }, version: string): Promise<void>;
@@ -25,6 +25,35 @@ export interface SliderSolverAdapter {
   decodeImage(dataUrl: string): Promise<PixelImage>;
   delay?(durationMs: number): Promise<void>;
   random?(): number;
+}
+
+interface FrameOffset {
+  x: number;
+  y: number;
+  viewportWidth: number;
+  viewportHeight: number;
+}
+
+function translateRect(rect: { x: number; y: number; width: number; height: number }, offset: FrameOffset) {
+  return { ...rect, x: rect.x + offset.x, y: rect.y + offset.y };
+}
+
+function translateDiscovery(discovery: ContentDiscovery, offset: FrameOffset | undefined): ContentDiscovery {
+  if (offset === undefined || (discovery.state !== 'ready' && discovery.state !== 'activatable')) return discovery;
+  if (discovery.state === 'activatable') return { ...discovery, activator: { ...discovery.activator, rect: translateRect(discovery.activator.rect, offset) } };
+  const challenge = discovery.challenge;
+  return {
+    ...discovery,
+    challenge: {
+      ...challenge,
+      challenge: translateRect(challenge.challenge, offset),
+      image: translateRect(challenge.image, offset),
+      track: translateRect(challenge.track, offset),
+      handle: translateRect(challenge.handle, offset),
+      ...(challenge.piece === undefined ? {} : { piece: translateRect(challenge.piece, offset) }),
+      viewport: { width: offset.viewportWidth, height: offset.viewportHeight, devicePixelRatio: challenge.viewport.devicePixelRatio },
+    },
+  };
 }
 
 const MINIMUM_CONFIDENCE = .58;
@@ -138,7 +167,7 @@ function stableChallengeGeometry(previous: SliderChallengeSnapshot, current: Sli
   );
 }
 
-async function activateChallenge(adapter: SliderSolverAdapter, tabId: number, discovery: Extract<ContentDiscovery, { state: 'activatable' }>, delay: (durationMs: number) => Promise<void>): Promise<ContentDiscovery> {
+async function activateChallenge(adapter: SliderSolverAdapter, tabId: number, frameId: number, frameOffset: FrameOffset | undefined, discovery: Extract<ContentDiscovery, { state: 'activatable' }>, delay: (durationMs: number) => Promise<void>): Promise<ContentDiscovery> {
   const target = { tabId };
   const x = discovery.activator.rect.x + discovery.activator.rect.width / 2;
   const y = discovery.activator.rect.y + discovery.activator.rect.height / 2;
@@ -147,11 +176,11 @@ async function activateChallenge(adapter: SliderSolverAdapter, tabId: number, di
     await adapter.debugger.attach(target, '1.3');
     attached = true;
     await adapter.debugger.sendCommand(target, 'Input.dispatchMouseEvent', { type: 'mouseMoved', x, y });
-    await adapter.tabs.sendMessage(tabId, { type: 'captcha:slider-automation-press' }).catch(() => undefined);
+    await adapter.tabs.sendMessage(tabId, { type: 'captcha:slider-automation-press' }, { frameId }).catch(() => undefined);
     try {
       await adapter.debugger.sendCommand(target, 'Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', buttons: 1, clickCount: 1 });
     } finally {
-      await adapter.tabs.sendMessage(tabId, { type: 'captcha:slider-automation-disarm' }).catch(() => undefined);
+      await adapter.tabs.sendMessage(tabId, { type: 'captcha:slider-automation-disarm' }, { frameId }).catch(() => undefined);
     }
     await adapter.debugger.sendCommand(target, 'Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', buttons: 0, clickCount: 1 });
   } catch {
@@ -162,10 +191,11 @@ async function activateChallenge(adapter: SliderSolverAdapter, tabId: number, di
   let latest: ContentDiscovery | undefined;
   for (const wait of [250, 350, 500, 700, 1_000, 1_500]) {
     await delay(wait);
-    const current = await adapter.tabs.sendMessage(tabId, { type: 'captcha:slider-discover' }).catch(() => undefined);
+    const current = await adapter.tabs.sendMessage(tabId, { type: 'captcha:slider-discover' }, { frameId }).catch(() => undefined);
     if (!isDiscovery(current)) continue;
-    if (current.state === 'ready' && !current.recentUserInput && latest?.state === 'ready' && stableChallengeGeometry(latest.challenge, current.challenge)) return current;
-    latest = current;
+    const translated = translateDiscovery(current, frameOffset);
+    if (translated.state === 'ready' && !translated.recentUserInput && latest?.state === 'ready' && stableChallengeGeometry(latest.challenge, translated.challenge)) return translated;
+    latest = translated;
   }
   return { state: 'not-found' };
 }
@@ -216,7 +246,11 @@ export function createSliderSolver(adapter: SliderSolverAdapter): SliderSolver {
       runGenerations.set(tab.id, runGeneration);
       const cancelled = (): boolean => runGenerations.get(tab.id) !== runGeneration;
       const siteDisabled = async (): Promise<boolean> => trigger === 'automatic' && !await adapter.settings.isSliderEnabled(tab.url);
-      let diagnostic: SliderRunDiagnostic = {};
+      const frameId = tab.frameId ?? 0;
+      let diagnostic: SliderRunDiagnostic = {
+        ...(frameId === 0 ? {} : { frameId }),
+        ...(tab.frameUrl === undefined ? {} : { frameSite: tab.frameUrl }),
+      };
       const result = (state: SliderResultState, details: Omit<SliderRunResult, 'state' | 'diagnostic'> = {}): SliderRunResult => ({
         state,
         ...details,
@@ -226,8 +260,17 @@ export function createSliderSolver(adapter: SliderSolverAdapter): SliderSolver {
       if (cancelled()) return result('permission-denied', { reason: 'run-cancelled' });
       if (!await adapter.permissions.contains({ permissions: ['debugger'] })) return result('permission-denied', { reason: 'debugger-not-granted' });
       if (cancelled()) return result('permission-denied', { reason: 'run-cancelled' });
-      diagnostic = { attemptId: `slider-${(++attemptSequence).toString(36)}`, phase: 'discovery' };
-      const initialDiscovery = await adapter.tabs.sendMessage(tab.id, { type: 'captcha:slider-discover' }).catch(() => undefined);
+      diagnostic = { ...diagnostic, attemptId: `slider-${(++attemptSequence).toString(36)}`, phase: 'discovery' };
+      let frameOffset: FrameOffset | undefined;
+      if (frameId !== 0) {
+        const value = await adapter.tabs.sendMessage(tab.id, { type: 'captcha:slider-frame-offset', frameUrl: tab.frameUrl }, { frameId: 0 }).catch(() => undefined);
+        if (typeof value !== 'object' || value === null) return result('unsupported', { reason: 'frame-offset-unavailable' });
+        const candidate = value as Partial<FrameOffset>;
+        if (![candidate.x, candidate.y, candidate.viewportWidth, candidate.viewportHeight].every((entry) => typeof entry === 'number' && Number.isFinite(entry))) return result('unsupported', { reason: 'frame-offset-unavailable' });
+        frameOffset = candidate as FrameOffset;
+      }
+      const initialValue = await adapter.tabs.sendMessage(tab.id, { type: 'captcha:slider-discover' }, { frameId }).catch(() => undefined);
+      const initialDiscovery = isDiscovery(initialValue) ? translateDiscovery(initialValue, frameOffset) : initialValue;
       if (cancelled()) return result('permission-denied', { reason: 'run-cancelled' });
       if (!isDiscovery(initialDiscovery)) return result('failed', { reason: 'content-unavailable' });
       if (expectedRevision !== undefined && sliderDiscoveryKey(initialDiscovery) !== expectedRevision) return result('uncertain', { reason: 'challenge-changed' });
@@ -236,7 +279,7 @@ export function createSliderSolver(adapter: SliderSolverAdapter): SliderSolver {
         diagnostic = { ...diagnostic, provider: discoveryValue.activator.provider, phase: 'activation' };
         if (!discoveryValue.pageVisible || (trigger === 'automatic' && !discoveryValue.pageFocused)) return result('page-inactive');
         if (discoveryValue.recentUserInput) return result('user-active');
-        discoveryValue = await activateChallenge(adapter, tab.id, discoveryValue, delay);
+        discoveryValue = await activateChallenge(adapter, tab.id, frameId, frameOffset, discoveryValue, delay);
         if (cancelled()) return result('permission-denied', { reason: 'run-cancelled' });
       }
       if (discoveryValue.state !== 'ready') return result(discoveryValue.state === 'not-found' ? 'not-found' : 'unsupported', { reason: discoveryValue.state });
@@ -248,6 +291,8 @@ export function createSliderSolver(adapter: SliderSolverAdapter): SliderSolver {
       const initialPieceOffsetX = pieceOffsetX(before);
       const pieceOffsetY = before.pieceMask?.offsetY ?? (before.piece === undefined ? undefined : before.piece.y - before.image.y);
       diagnostic = {
+        ...(diagnostic.frameId === undefined ? {} : { frameId: diagnostic.frameId }),
+        ...(diagnostic.frameSite === undefined ? {} : { frameSite: diagnostic.frameSite }),
         provider: before.provider,
         attemptId: diagnostic.attemptId,
         challengeId,
@@ -263,7 +308,7 @@ export function createSliderSolver(adapter: SliderSolverAdapter): SliderSolver {
       let lastPointer = { x: 0, y: 0 };
       let releasePointer = async (): Promise<void> => undefined;
       const userIsActive = async (): Promise<boolean> => {
-        const value = await adapter.tabs.sendMessage(tab.id, { type: 'captcha:slider-user-active' }).catch(() => undefined);
+        const value = await adapter.tabs.sendMessage(tab.id, { type: 'captcha:slider-user-active' }, { frameId }).catch(() => undefined);
         return typeof value === 'object' && value !== null && (value as { active?: unknown }).active === true;
       };
       try {
@@ -322,7 +367,8 @@ export function createSliderSolver(adapter: SliderSolverAdapter): SliderSolver {
         };
         if (accepted === undefined || location === undefined) return result('low-confidence', { confidence: location?.confidence ?? 0 });
         confidence = location.confidence;
-        const verifyValue = await adapter.tabs.sendMessage(tab.id, { type: 'captcha:slider-discover' }).catch(() => undefined);
+        const verifyRaw = await adapter.tabs.sendMessage(tab.id, { type: 'captcha:slider-discover' }, { frameId }).catch(() => undefined);
+        const verifyValue = isDiscovery(verifyRaw) ? translateDiscovery(verifyRaw, frameOffset) : verifyRaw;
         if (cancelled()) return result('permission-denied', { reason: 'run-cancelled' });
         if (!isDiscovery(verifyValue) || verifyValue.state !== 'ready' || verifyValue.challenge.revision !== before.revision || !verifyValue.pageVisible || (trigger === 'automatic' && !verifyValue.pageFocused) || verifyValue.recentUserInput) {
           return result('uncertain', { confidence, reason: 'challenge-changed' });
@@ -346,15 +392,15 @@ export function createSliderSolver(adapter: SliderSolverAdapter): SliderSolver {
         await adapter.debugger.sendCommand(target(tab.id), 'Input.dispatchMouseEvent', { type: 'mouseMoved', x: start.x, y: start.y });
         await delay(45 + Math.round(random() * 45));
         if (await siteDisabled()) return result('permission-denied', { confidence, reason: 'site-not-enabled' });
-        await adapter.tabs.sendMessage(tab.id, { type: 'captcha:slider-automation-press' }).catch(() => undefined);
+        await adapter.tabs.sendMessage(tab.id, { type: 'captcha:slider-automation-press' }, { frameId }).catch(() => undefined);
         if (cancelled()) {
-          await adapter.tabs.sendMessage(tab.id, { type: 'captcha:slider-automation-disarm' }).catch(() => undefined);
+          await adapter.tabs.sendMessage(tab.id, { type: 'captcha:slider-automation-disarm' }, { frameId }).catch(() => undefined);
           return result('permission-denied', { reason: 'run-cancelled' });
         }
         try {
           await adapter.debugger.sendCommand(target(tab.id), 'Input.dispatchMouseEvent', { type: 'mousePressed', x: start.x, y: start.y, button: 'left', buttons: 1, clickCount: 1 });
         } finally {
-          await adapter.tabs.sendMessage(tab.id, { type: 'captcha:slider-automation-disarm' }).catch(() => undefined);
+          await adapter.tabs.sendMessage(tab.id, { type: 'captcha:slider-automation-disarm' }, { frameId }).catch(() => undefined);
         }
         pointerPressed = true;
         await delay(70 + Math.round(random() * 70));
@@ -381,7 +427,8 @@ export function createSliderSolver(adapter: SliderSolverAdapter): SliderSolver {
         let end = points.at(-1) ?? { x: endX, y: start.y };
         for (let measurement = 0; measurement < 2; measurement += 1) {
           await delay(45);
-          const feedbackValue = await adapter.tabs.sendMessage(tab.id, { type: 'captcha:slider-discover' }).catch(() => undefined);
+          const feedbackRaw = await adapter.tabs.sendMessage(tab.id, { type: 'captcha:slider-discover' }, { frameId }).catch(() => undefined);
+          const feedbackValue = isDiscovery(feedbackRaw) ? translateDiscovery(feedbackRaw, frameOffset) : feedbackRaw;
           if (!isDiscovery(feedbackValue) || feedbackValue.state !== 'ready' || feedbackValue.challenge.revision !== before.revision) break;
           const actualPieceOffsetX = pieceOffsetX(feedbackValue.challenge);
           if (actualPieceOffsetX === undefined) break;
@@ -421,7 +468,7 @@ export function createSliderSolver(adapter: SliderSolverAdapter): SliderSolver {
         await delay(wait);
         if (cancelled()) return result('permission-denied', { confidence, reason: 'run-cancelled' });
         if (await siteDisabled()) return result('permission-denied', { confidence, reason: 'site-not-enabled' });
-        const current = outcome(await adapter.tabs.sendMessage(tab.id, { type: 'captcha:slider-outcome', revision: before.revision }).catch(() => undefined));
+        const current = outcome(await adapter.tabs.sendMessage(tab.id, { type: 'captcha:slider-outcome', revision: before.revision }, { frameId }).catch(() => undefined));
         outcomeObservations.push(current);
         diagnostic = { ...diagnostic, outcomeSequence: outcomeObservations.join('>') };
         if (current === 'success') return result('success', { confidence, challengeRevision: before.revision });

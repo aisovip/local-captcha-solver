@@ -23,7 +23,8 @@ export interface PopupControllerAdapter {
     sendMessage?(tabId: number, message: unknown): Promise<unknown>;
   };
   scripting?: {
-    executeScript(details: { target: { tabId: number }; files: readonly string[] }): Promise<unknown>;
+    executeScript(details: { target: { tabId: number; allFrames?: boolean }; files: readonly string[] }): Promise<unknown>;
+    frameOrigins?(tabId: number): Promise<readonly string[]>;
   };
   runtime: { sendMessage(message: unknown): Promise<unknown> };
   permissions: {
@@ -402,7 +403,7 @@ export function createPopupController(adapter: PopupControllerAdapter, view: Pop
           response = await adapter.tabs.sendMessage(targetTabId, { type: 'captcha:recognize-page' });
         } catch {
           if (adapter.scripting === undefined) throw new Error('content unavailable');
-          await adapter.scripting.executeScript({ target: { tabId: targetTabId }, files: ['content-scripts/content.js'] });
+          await adapter.scripting.executeScript({ target: { tabId: targetTabId, allFrames: true }, files: ['content-scripts/content.js'] });
           response = await adapter.tabs.sendMessage(targetTabId, { type: 'captcha:recognize-page' });
         }
         return typeof response === 'object' && response !== null;

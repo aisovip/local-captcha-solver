@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8">
+    <title>ByteDance slider challenge</title>
+    <style>
+      * { box-sizing: border-box; }
+      body { margin: 0; padding: 28px; font: 16px system-ui, sans-serif; color: #171717; background: #fff; }
+      .vc-captcha-verify { width: 464px; }
+      .captcha-verify__img-wrapper { position: relative; width: 464px; height: 288px; overflow: hidden; }
+      .captcha-verify-image { display: block; width: 464px; height: 288px; }
+      .dragger-box { position: absolute; inset: 0; pointer-events: none; }
+      .captcha-verify-image__slide { position: absolute; left: 8px; top: 82px; width: 42px; height: 42px; border: 2px solid #fff; border-radius: 7px; background: rgba(255,255,255,.24); }
+      .captcha-slider { position: relative; width: 464px; height: 56px; margin-top: 8px; background: #f1f2f4; }
+      .captcha-slider__button { position: absolute; left: 0; top: 2px; width: 52px; height: 52px; border: 1px solid #d5d8dd; background: #fff; cursor: grab; }
+      #result { min-height: 24px; margin-top: 12px; color: #237a45; }
+    </style>
+  </head>
+  <body>
+    <div class="vc-captcha-verify slide">
+      <div class="verify-image captcha-verify__img-wrapper">
+        <canvas class="captcha-verify-image" width="464" height="288"></canvas>
+        <div class="dragger-box"><div class="dragger-item"><div id="captcha-verify_img_slide" class="captcha-verify-image__slide"></div></div></div>
+      </div>
+      <div class="captcha-slider captcha_verify_slide--button"><button class="captcha-slider__button" aria-label="拖动滑块"></button></div>
+      <div id="result" role="status"></div>
+    </div>
+    <script>
+      const canvas = document.querySelector('canvas');
+      const context = canvas.getContext('2d');
+      const handle = document.querySelector('.captcha-slider__button');
+      const piece = document.querySelector('.captcha-verify-image__slide');
+      const result = document.querySelector('#result');
+      const gapX = 302;
+      let startX = 0;
+      let dragging = false;
+      for (let y = 0; y < canvas.height; y += 1) {
+        const shade = 120 + Math.round(32 * Math.sin(y / 23));
+        context.fillStyle = `rgb(${shade}, ${shade + 28}, ${shade + 48})`;
+        context.fillRect(0, y, canvas.width, 1);
+      }
+      context.strokeStyle = '#161616';
+      context.lineWidth = 3;
+      context.strokeRect(gapX, 82, 42, 42);
+      handle.addEventListener('pointerdown', (event) => {
+        dragging = true;
+        startX = event.clientX;
+        handle.setPointerCapture(event.pointerId);
+      });
+      handle.addEventListener('pointermove', (event) => {
+        if (!dragging) return;
+        const offset = Math.max(0, Math.min(412, event.clientX - startX));
+        handle.style.transform = `translateX(${offset}px)`;
+        piece.style.transform = `translateX(${offset}px)`;
+      });
+      handle.addEventListener('pointerup', (event) => {
+        if (!dragging) return;
+        dragging = false;
+        const offset = Math.max(0, Math.min(412, event.clientX - startX));
+        const targetOffset = gapX - piece.offsetLeft;
+        result.className = Math.abs(offset - targetOffset) <= 8 ? 'success' : 'failure';
+        result.textContent = result.className === 'success' ? '验证成功' : '请重试';
+      });
+    </script>
+  </body>
+</html>

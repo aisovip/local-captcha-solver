@@ -86,15 +86,15 @@ describe('ModelStatusStore', () => {
     expect(listener).toHaveBeenCalledOnce();
   });
 
-  it('retains only the most recent 20 user-facing records', () => {
+  it('retains only the most recent 50 user-facing records', () => {
     let now = 1;
     const store = createModelStatusStore(() => now++);
-    for (let index = 0; index < 35; index += 1) store.recognitionStarted();
+    for (let index = 0; index < 65; index += 1) store.recognitionStarted();
 
     const logs = store.snapshot().logs;
-    expect(logs).toHaveLength(20);
+    expect(logs).toHaveLength(50);
     expect(logs[0]?.at).toBe(16);
-    expect(logs.at(-1)?.at).toBe(35);
+    expect(logs.at(-1)?.at).toBe(65);
   });
 
   it('records bounded recognition text and actionable errors', () => {

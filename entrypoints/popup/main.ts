@@ -359,14 +359,17 @@ export function startPopup(
     const tabs = await adapter.tabs.query({ active: true, currentWindow: true });
     const pageUrl = typeof tabs[0]?.url === 'string' ? tabs[0].url : undefined;
     if (pageUrl === undefined) return false;
-    const origins = [...originsForPage(pageUrl)];
+    const frameOrigins = typeof tabs[0]?.id === 'number' ? await adapter.scripting?.frameOrigins?.(tabs[0].id).catch(() => []) ?? [] : [];
+    const origins = [...new Set([...originsForPage(pageUrl), ...frameOrigins.flatMap((origin) => {
+      try { return originsForPage(origin); } catch { return []; }
+    })])];
     if (await adapter.permissions.contains({ origins })) return true;
     return adapter.permissions.request({ origins });
   };
   const ensurePageContent = async (tabId: number): Promise<void> => {
     const response = await adapter.tabs.sendMessage?.(tabId, { type: 'captcha:ping' }).catch(() => undefined);
     if (response && typeof response === 'object' && 'ok' in response && response.ok === true) return;
-    await adapter.scripting?.executeScript({ target: { tabId }, files: ['content-scripts/content.js'] });
+    await adapter.scripting?.executeScript({ target: { tabId, allFrames: true }, files: ['content-scripts/content.js'] });
   };
   const readPageContext = async (inject = false): Promise<'text' | 'slider' | 'none' | undefined> => {
     try {
@@ -482,7 +485,25 @@ if (root !== null && typeof browser !== 'undefined') {
         sendMessage: (tabId, message) => browser.tabs.sendMessage(tabId, message),
       },
       scripting: {
-        executeScript: (details) => (browser.scripting as unknown as { executeScript(value: { target: { tabId: number }; files: string[] }): Promise<unknown> }).executeScript({ target: details.target, files: [...details.files] }),
+        executeScript: (details) => (browser.scripting as unknown as { executeScript(value: { target: { tabId: number; allFrames?: boolean }; files: string[] }): Promise<unknown> }).executeScript({ target: details.target, files: [...details.files] }),
+        async frameOrigins(tabId) {
+          const results = await (browser.scripting as unknown as {
+            executeScript(value: { target: { tabId: number }; func: () => string[] }): Promise<readonly { result?: string[] }[]>;
+          }).executeScript({
+            target: { tabId },
+            func: () => [...document.querySelectorAll('iframe')].flatMap((frame) => {
+              const rect = frame.getBoundingClientRect();
+              if (rect.width < 160 || rect.height < 80 || rect.right <= 0 || rect.bottom <= 0 || rect.left >= innerWidth || rect.top >= innerHeight) return [];
+              const signal = `${frame.src} ${frame.id} ${frame.className} ${frame.title}`;
+              if (!/captcha|verify|verification|challenge|security/i.test(signal)) return [];
+              try {
+                const url = new URL(frame.src, location.href);
+                return url.protocol === 'http:' || url.protocol === 'https:' ? [url.origin] : [];
+              } catch { return []; }
+            }),
+          });
+          return results.flatMap((entry) => entry.result ?? []);
+        },
       },
       runtime: { sendMessage: (message) => sendRuntimeMessage(browser.runtime, message) },
       permissions: browser.permissions,

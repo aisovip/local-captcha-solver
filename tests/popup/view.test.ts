@@ -194,7 +194,7 @@ describe('popup view', () => {
 
     (root.querySelector('[data-slider-enabled]') as HTMLInputElement).click();
     await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledWith({ type: 'captcha:set-slider-enabled', enabled: true, hostname: 'portal.example.test' }));
-    await vi.waitFor(() => expect(executeScript).toHaveBeenCalledWith({ target: { tabId: 7 }, files: ['content-scripts/content.js'] }));
+    await vi.waitFor(() => expect(executeScript).toHaveBeenCalledWith({ target: { tabId: 7, allFrames: true }, files: ['content-scripts/content.js'] }));
     expect(root.querySelector('[data-slider-state-title]')?.textContent).toBe('滑块自动处理已开启');
 
     (root.querySelector('[data-run-slider]') as HTMLButtonElement).click();

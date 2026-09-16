@@ -12,7 +12,7 @@ export const SLIDER_RESULT_STATES = [
 
 export type SliderResultState = typeof SLIDER_RESULT_STATES[number];
 
-export type SliderProvider = 'aliyun' | 'geetest' | 'geetest-v4' | 'generic';
+export type SliderProvider = 'aliyun' | 'bytedance' | 'geetest' | 'geetest-v4' | 'generic';
 
 export type SliderImageSource = 'paired-background' | 'background' | 'viewport';
 export type SliderLocalizationMethod = 'reference-difference' | 'texture' | 'shape' | 'geometry' | 'edge-perimeter';
@@ -20,6 +20,8 @@ export type SliderDiagnosticPhase = 'discovery' | 'activation' | 'localization' 
 
 export interface SliderRunDiagnostic {
   readonly provider?: SliderProvider;
+  readonly frameSite?: string;
+  readonly frameId?: number;
   readonly attemptId?: string;
   readonly challengeId?: string;
   readonly phase?: SliderDiagnosticPhase;
@@ -77,6 +79,6 @@ export interface SliderSiteState {
 }
 
 export interface SliderSolver {
-  solve(tab: { id: number; url: string; windowId?: number }, trigger: 'manual' | 'automatic', expectedRevision?: string): Promise<SliderRunResult>;
+  solve(tab: { id: number; url: string; windowId?: number; frameId?: number; frameUrl?: string }, trigger: 'manual' | 'automatic', expectedRevision?: string): Promise<SliderRunResult>;
   cancel?(tabId: number): void;
 }

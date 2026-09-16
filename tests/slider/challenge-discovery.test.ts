@@ -239,6 +239,38 @@ describe('slider challenge outcome', () => {
     });
   });
 
+  it('discovers a ByteDance image-slide puzzle inside its verification frame', async () => {
+    document.body.innerHTML = '<div class="vc-captcha-verify slide"><div class="verify-image captcha-verify__img-wrapper"><img class="captcha-verify-image" src="data:image/png;base64,AQ=="><canvas class="captcha-verify-image"></canvas><div class="dragger-box"><div class="dragger-item"><img id="captcha-verify_img_slide" class="captcha-verify-image__slide" src="data:image/png;base64,Ag=="></div></div></div><div class="captcha-slider captcha_verify_slide--button"><button class="captcha-slider__button"></button></div></div>';
+    const root = document.querySelector('.vc-captcha-verify')!;
+    const image = document.querySelector('img.captcha-verify-image')!;
+    const canvas = document.querySelector('canvas')!;
+    const piece = document.querySelector('#captcha-verify_img_slide')!;
+    const track = document.querySelector('.captcha-slider')!;
+    const handle = document.querySelector('.captcha-slider__button')!;
+    const rects = new Map<Element, { x: number; y: number; width: number; height: number }>([
+      [root, { x: 0, y: 0, width: 464, height: 350 }],
+      [image, { x: 0, y: 0, width: 464, height: 288 }],
+      [canvas, { x: 0, y: 0, width: 464, height: 288 }],
+      [piece, { x: 8, y: 78, width: 52, height: 52 }],
+      [track, { x: 0, y: 296, width: 464, height: 56 }],
+      [handle, { x: 0, y: 298, width: 52, height: 52 }],
+    ]);
+    for (const [element, rect] of rects) element.getBoundingClientRect = () => ({
+      ...rect, left: rect.x, top: rect.y, right: rect.x + rect.width, bottom: rect.y + rect.height, toJSON: () => ({}),
+    });
+
+    await expect(discoverSliderChallenge()).resolves.toMatchObject({
+      state: 'ready',
+      challenge: {
+        provider: 'bytedance',
+        image: { x: 0, y: 0, width: 464, height: 288 },
+        piece: { x: 8, y: 78, width: 52, height: 52 },
+        track: { x: 0, y: 296, width: 464, height: 56 },
+        handle: { x: 0, y: 298, width: 52, height: 52 },
+      },
+    });
+  });
+
   it('uses the handle to activate a collapsed puzzle before its image is visible', async () => {
     document.body.innerHTML = '<div class="verification-widget"><div class="drag-control">Drag to verify<div class="drag-thumb"></div></div></div>';
     const root = document.querySelector('.verification-widget')!;

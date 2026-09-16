@@ -206,7 +206,20 @@ describe('options entrypoint', () => {
       await vi.waitFor(() => expect(writeText).toHaveBeenCalledOnce());
       const report = writeText.mock.calls[0]![0];
       expect(report).toMatch(/^```json\n[\s\S]+\n```$/);
-      expect(JSON.parse(report.slice(8, -4))).toEqual({ extensionVersion: '1.0.0', browser: navigator.userAgent, interfaceLocale: 'en', ...latest });
+      expect(JSON.parse(report.slice(8, -4))).toMatchObject({
+        extension: { name: 'Captcha Helper', version: '1.0.0' },
+        environment: {
+          browser: { name: expect.any(String) },
+          engine: { name: expect.any(String) },
+          platform: navigator.platform,
+          language: navigator.language,
+          userAgent: navigator.userAgent,
+        },
+        interfaceLocale: 'en',
+        status: latest.status,
+        logs: latest.logs,
+      });
+      expect(JSON.parse(report.slice(8, -4)).generatedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
       await vi.waitFor(() => expect(button.textContent).toBe('Copied'));
       writeText.mockRejectedValueOnce(new Error('Clipboard unavailable'));
       button.click();

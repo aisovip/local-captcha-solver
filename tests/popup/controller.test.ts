@@ -65,7 +65,7 @@ describe('popup controller', () => {
 
     await expect(app.controller.recognizeCurrentPage()).resolves.toBe(true);
 
-    expect(app.executeScript).toHaveBeenCalledWith({ target: { tabId: 7 }, files: ['content-scripts/content.js'] });
+    expect(app.executeScript).toHaveBeenCalledWith({ target: { tabId: 7, allFrames: true }, files: ['content-scripts/content.js'] });
     expect(app.tabSendMessage).toHaveBeenCalledTimes(2);
   });
 

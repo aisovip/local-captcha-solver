@@ -17,6 +17,24 @@ describe('content runtime messages', () => {
     await vi.waitFor(() => expect(response).toHaveBeenCalledWith({ state: 'not-found' }));
   });
 
+  it('selects an exact CAPTCHA frame URL when several visible frames share its origin', async () => {
+    vi.stubGlobal('defineContentScript', (value: unknown) => value);
+    document.body.innerHTML = '<iframe></iframe><iframe></iframe>';
+    const frames = [...document.querySelectorAll('iframe')];
+    Object.defineProperty(frames[0], 'src', { configurable: true, value: 'https://rmc.bytedance.com/account/help' });
+    Object.defineProperty(frames[1], 'src', { configurable: true, value: 'https://rmc.bytedance.com/verifycenter/captcha/v2?token=secret#step' });
+    frames[0]!.getBoundingClientRect = () => ({ x: 10, y: 20, left: 10, top: 20, right: 310, bottom: 220, width: 300, height: 200, toJSON: () => ({}) });
+    frames[1]!.getBoundingClientRect = () => ({ x: 340, y: 120, left: 340, top: 120, right: 740, bottom: 420, width: 400, height: 300, toJSON: () => ({}) });
+    const { createRuntimeContent } = await import('../../entrypoints/content');
+    createRuntimeContent({ sendMessage: vi.fn(), onMessage: { addListener: listener } });
+    const handle = listener.mock.calls[0]?.[0] as (message: unknown) => Promise<unknown>;
+
+    await expect(handle({
+      type: 'captcha:slider-frame-offset',
+      frameUrl: 'https://rmc.bytedance.com/verifycenter/captcha/v2?token=secret',
+    })).resolves.toEqual({ x: 340, y: 120, viewportWidth: innerWidth, viewportHeight: innerHeight });
+  });
+
   it('does not initialize duplicate injected content runtimes in one frame', async () => {
     vi.stubGlobal('defineContentScript', (value: unknown) => value);
     const onMessage = { addListener: vi.fn() };
