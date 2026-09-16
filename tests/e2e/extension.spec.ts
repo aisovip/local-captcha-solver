@@ -559,9 +559,12 @@ test('binds a text CAPTCHA across popup recreation, image refresh, and page relo
   await diagnostics.locator('[data-copy-diagnostics]').click();
   await expect.poll(() => diagnostics.evaluate(() => (globalThis as { __bindingReport?: string }).__bindingReport ?? '')).toContain('```json');
   const reportText = await diagnostics.evaluate(() => (globalThis as { __bindingReport?: string }).__bindingReport!);
-  const report = JSON.parse(reportText.slice(8, -4)) as ModelStatusSnapshot & { extensionVersion: string; browser: string };
-  expect(report.extensionVersion).toBe('1.4.0');
-  expect(report.browser).toContain('Chrome/');
+  const report = JSON.parse(reportText.slice(8, -4)) as ModelStatusSnapshot & { extension: { name: string; version: string }; environment: { browser: { name: string }; engine: { name: string }; userAgent: string } };
+  expect(report.extension.name).toBe('Captcha Helper');
+  expect(report.extension.version).toBe('1.4.1');
+  expect(report.environment.browser.name).toBe('Chrome');
+  expect(report.environment.engine.name).toBe('Blink');
+  expect(report.environment.userAgent).toContain('Chrome/');
   expect(report.logs.filter(log => log.kind === 'binding').map(log => log.binding?.event)).toEqual(['started', 'selected', 'rejected', 'selected', 'saved']);
   expect(reportText).not.toContain('BINDING_SECRET');
   expect(reportText).not.toContain('input[placeholder');
@@ -702,7 +705,10 @@ test('renders the release introduction in both languages and themes and reopens 
     for (const colorScheme of ['light', 'dark'] as const) {
       await guide.emulateMedia({ colorScheme, reducedMotion: 'reduce' });
       await guide.setViewportSize({ width: 1280, height: 800 });
-      await expect.poll(() => guide.locator('.release-visual img').evaluate((image: HTMLImageElement) => image.complete && image.naturalWidth > 0)).toBe(true);
+      const visual = guide.locator('.release-visual img');
+      if (await visual.count()) {
+        await expect.poll(() => visual.evaluate((image: HTMLImageElement) => image.complete && image.naturalWidth > 0)).toBe(true);
+      }
       expect(await guide.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
       await guide.screenshot({ path: testInfo.outputPath(`release-${locale}-${colorScheme}.png`), fullPage: true });
       await guide.setViewportSize({ width: 390, height: 844 });
@@ -728,8 +734,8 @@ test('browses the offline release archive and returns to an automatically opened
   await popup.locator('[data-open-history]').click();
   const archive = await opened;
   await expect(archive).toHaveURL(/flow=history/);
-  await expect(archive.locator('[data-release]')).toHaveCount(8);
-  await expect(archive.locator('[data-current]')).toHaveAttribute('data-release', '1.4.0');
+  await expect(archive.locator('[data-release]')).toHaveCount(9);
+  await expect(archive.locator('[data-current]')).toHaveAttribute('data-release', '1.4.1');
   await context.setOffline(true);
   try {
     for (const locale of ['zh_CN', 'en']) {
@@ -761,14 +767,14 @@ test('browses the offline release archive and returns to an automatically opened
       const stored = await api.storage.local.get('captcha-settings');
       await api.storage.local.set({ 'captcha-settings': { ...(stored['captcha-settings'] as object), lastSeenUpgradeGuide: '1.3.3' } });
     });
-    await archive.goto(`${extensionOrigin}/onboarding.html?flow=upgrade&version=1.4.0`);
+    await archive.goto(`${extensionOrigin}/onboarding.html?flow=upgrade&version=1.4.1`);
     await expect(archive).toHaveURL(/manual=1/);
     await archive.locator('[data-release-history]').click();
     await expect(archive.locator('[data-page="history"]')).toBeVisible();
     await archive.goBack();
-    await expect(archive.locator('[data-release-version="1.4.0"]')).toBeVisible();
+    await expect(archive.locator('[data-release-version="1.4.1"]')).toBeVisible();
     await archive.reload();
-    await expect(archive.locator('[data-release-version="1.4.0"]')).toBeVisible();
+    await expect(archive.locator('[data-release-version="1.4.1"]')).toBeVisible();
   } finally {
     await context.setOffline(false);
     await archive.close();

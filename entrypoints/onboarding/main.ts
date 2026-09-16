@@ -61,7 +61,7 @@ export async function startOnboarding(root: HTMLElement, extension: OnboardingBr
   let chapter = flow === 'upgrade' ? 'release-welcome' : flow === 'slider' ? 'setup-slider' : 'setup-welcome';
   let journey: ReturnType<typeof bindScrollJourney> | undefined;
   let transition: ViewTransition | undefined;
-  const preferences = { autoFill: settings.autoFill, copyOnNoField: settings.copyOnNoField, recognitionShortcut: settings.recognitionShortcut };
+  const preferences = { autoFill: settings.autoFill, directFill: settings.directFill, copyOnNoField: settings.copyOnNoField, recognitionShortcut: settings.recognitionShortcut };
   const reconcile = () => extension.runtime.sendMessage({ type: 'captcha:reconcile-access' });
   const openTab = async (path: string) => {
     const url = /^https?:/.test(path) ? path : extension.runtime.getURL(path);
@@ -103,7 +103,7 @@ export async function startOnboarding(root: HTMLElement, extension: OnboardingBr
     const filling = `<section class="journey-section" id="setup-filling" data-chapter data-page="preferences"><div class="journey-scene setup-scene">
       ${backLink('setup-access', words('回看网站范围', 'Back to site access'))}
       <div class="chapter-heading"><p class="chapter-label">${words('识别与填写', 'Recognition and filling')}</p><h2 tabindex="-1">${words('识别之后，交给你。', 'The answer is yours.')}</h2><p class="lead">${words('选择结果如何填写，表单始终由你提交。', 'Choose how answers are filled. You always submit the form.')}</p></div>
-      <div class="setup-controls"><div class="preference-list">${switchRow('onboarding-auto-fill', preferences.autoFill, t('autoFill'), words('结果足够确定时，填入空输入框。', 'Fill an empty input when the result is reliable.'))}${switchRow('onboarding-copy', preferences.copyOnNoField, t('copyOnNoField'), words('未找到输入框时，将结果复制到剪贴板。', 'Copy the answer when no matching input is found.'))}</div><details class="more-settings" id="setup-more"><summary>${words('更多设置', 'More options')}</summary><label class="shortcut-row" for="onboarding-shortcut">${t('shortcut')}<select id="onboarding-shortcut">${[['middle', t('shortcutMiddle')], ['ctrl-click', t('shortcutCtrl')], ['alt-click', t('shortcutAlt')], ['shift-click', t('shortcutShift')]].map(([value, label]) => `<option value="${value}" ${preferences.recognitionShortcut === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label></details><p class="permission-note">${words('图片与识别结果，留在你的浏览器。', 'Images and results stay in your browser.')}</p>${guideError}<footer class="setup-actions"><button type="button" class="primary-button" data-primary data-finish-setup>${words('完成设置', 'Finish setup')}</button></footer></div>
+      <div class="setup-controls"><div class="preference-list">${switchRow('onboarding-auto-fill', preferences.autoFill, t('autoFill'), words('结果足够确定时，填入空输入框。', 'Fill an empty input when the result is reliable.'))}${switchRow('onboarding-direct-fill', preferences.directFill, t('directFill'), t('directFillBody'))}${switchRow('onboarding-copy', preferences.copyOnNoField, t('copyOnNoField'), words('未找到输入框时，将结果复制到剪贴板。', 'Copy the answer when no matching input is found.'))}</div><details class="more-settings" id="setup-more"><summary>${words('更多设置', 'More options')}</summary><label class="shortcut-row" for="onboarding-shortcut">${t('shortcut')}<select id="onboarding-shortcut">${[['middle', t('shortcutMiddle')], ['ctrl-click', t('shortcutCtrl')], ['alt-click', t('shortcutAlt')], ['shift-click', t('shortcutShift')]].map(([value, label]) => `<option value="${value}" ${preferences.recognitionShortcut === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label></details><p class="permission-note">${words('图片与识别结果，留在你的浏览器。', 'Images and results stay in your browser.')}</p>${guideError}<footer class="setup-actions"><button type="button" class="primary-button" data-primary data-finish-setup>${words('完成设置', 'Finish setup')}</button></footer></div>
     </div></section>`;
     const practice = `<section class="practice" data-practice hidden><label>${words('示例验证码', 'Sample CAPTCHA')}</label><canvas width="240" height="80" data-demo-canvas aria-label="20 + 22"></canvas><div><button type="button" class="secondary-button" data-run-demo>${t('runDemo')}</button><p data-demo-status role="status">${t('demoIdle')}</p></div></section>`;
     const sliderDone = stage === 'slider-complete';
@@ -119,7 +119,7 @@ export async function startOnboarding(root: HTMLElement, extension: OnboardingBr
     </div></section>`;
     const progress = [['setup-welcome', words('欢迎', 'Welcome')], ['setup-access', words('网站范围', 'Site access')], ['setup-filling', words('填写方式', 'Filling')]];
     const navigation = flow === 'welcome' && stage === 'setup' ? `<nav class="journey-nav" aria-label="${words('设置步骤', 'Setup steps')}"><ol>${progress.map(([id, label]) => `<li>${chapterLink(id, label)}</li>`).join('')}</ol></nav>` : '';
-    const content = flow === 'upgrade' ? releaseIntroductionMarkup(release!, version, locale) : flow === 'history' ? releaseHistoryMarkup(version, locale, unavailableRelease) : stage === 'setup' ? welcome + access + filling : stage === 'slider' ? slider : completion;
+    const content = flow === 'upgrade' ? releaseIntroductionMarkup(release!, version, locale, { directFill: settings.directFill }) : flow === 'history' ? releaseHistoryMarkup(version, locale, unavailableRelease) : stage === 'setup' ? welcome + access + filling : stage === 'slider' ? slider : completion;
 
     const paint = () => {
       journey?.dispose();
@@ -153,7 +153,9 @@ export async function startOnboarding(root: HTMLElement, extension: OnboardingBr
         }
       }));
       root.querySelector<HTMLInputElement>('#onboarding-auto-fill')?.addEventListener('change', (event) => { preferences.autoFill = (event.target as HTMLInputElement).checked; });
+      root.querySelector<HTMLInputElement>('#onboarding-direct-fill')?.addEventListener('change', (event) => { preferences.directFill = (event.target as HTMLInputElement).checked; });
       root.querySelector<HTMLInputElement>('#onboarding-copy')?.addEventListener('change', (event) => { preferences.copyOnNoField = (event.target as HTMLInputElement).checked; });
+      root.querySelector<HTMLInputElement>('#release-direct-fill')?.addEventListener('change', (event) => { void store.setDirectFill((event.target as HTMLInputElement).checked); });
       root.querySelector('#onboarding-shortcut')?.addEventListener('change', (event) => { const value = (event.target as HTMLSelectElement).value; if (isRecognitionShortcut(value)) preferences.recognitionShortcut = value; });
       root.querySelector('[data-open-settings]')?.addEventListener('click', () => { void openTab(`options.html#${stage === 'slider-complete' ? 'slider' : 'static'}`); });
       root.querySelector('[data-open-geetest]')?.addEventListener('click', () => { void openTab('https://2captcha.com/demo/geetest'); });
@@ -213,6 +215,7 @@ export async function startOnboarding(root: HTMLElement, extension: OnboardingBr
             } else {
               await store.setAccessMode(scope);
               await store.setAutoFill(preferences.autoFill);
+              await store.setDirectFill(preferences.directFill);
               await store.setCopyOnNoField(preferences.copyOnNoField);
               await store.setRecognitionShortcut(preferences.recognitionShortcut);
               await reconcile();

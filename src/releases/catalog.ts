@@ -53,9 +53,22 @@ interface Introduction {
   highlights: readonly { title: Copy; body: Copy }[];
   note?: Copy;
   image?: 'binding';
+  /** Ships an immediate, in-page switch for this setting on the current release's introduction. */
+  setting?: 'directFill';
 }
 
 export const introductions: Record<string, Introduction> = {
+  '1.4.1': {
+    title: ['识别后直接填入，提示不再遮挡验证码', 'Direct filling and prompts that stay clear'],
+    headline: ['少一次确认。', 'One less confirmation.'],
+    summary: ['可以选择识别后直接填入，不再等待确认；提示也会避开验证码图片，方便核对。', 'Choose direct filling and skip the confirmation step. Prompts now keep the CAPTCHA visible.'],
+    highlights: [
+      { title: ['识别完成，直接填入。', 'Recognized. Filled. Done.'], body: ['开启“识别后直接填入”后，识别结果直接进入输入框，不再弹出确认提示，填错时自行修改即可。开关在“设置 → 静态验证码 → 填写”，也可以在下方直接开启。[#16](https://github.com/hongshuo-wang/local-captcha-solver/issues/16)', 'Turn on “Fill recognized results directly” and answers go straight into the input without a confirmation prompt. Correct any mistake yourself. The switch lives in Settings → Static CAPTCHAs → Filling, or enable it below. [#16](https://github.com/hongshuo-wang/local-captcha-solver/issues/16)'] },
+      { title: ['提示，不再挡住验证码。', 'Prompts keep the CAPTCHA visible.'], body: ['识别提示与确认面板会自动避开验证码图片，移到输入框旁边或下方，核对结果更方便。[#16](https://github.com/hongshuo-wang/local-captcha-solver/issues/16)', 'Recognition and confirmation prompts now avoid the CAPTCHA image, moving beside or below the input so you can check each answer. [#16](https://github.com/hongshuo-wang/local-captcha-solver/issues/16)'] },
+    ],
+    setting: 'directFill',
+    note: ['“识别后直接填入”默认关闭。开启后，把握不足的结果也会填入，提交前请检查。', 'Direct filling is off by default. When enabled, less certain answers are also filled, so review before submitting.'],
+  },
   '1.4.0': {
     title: ['手动指定验证码，结果就在旁边', 'Choose a CAPTCHA and see its answer beside it'],
     headline: ['找到它。记住它。', 'Point it out. We’ll remember.'],

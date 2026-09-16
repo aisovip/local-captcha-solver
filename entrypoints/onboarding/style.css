@@ -96,6 +96,9 @@ h2 { font-size: clamp(30px, 4vw, 44px); }
 .release-details h3 { margin: 0 0 10px; font-size: 21px; line-height: 1.35; font-weight: 620; letter-spacing: -.02em; }
 .release-details p { margin: 0; color: var(--ch-muted); font-size: 14px; }
 .release-privacy { grid-column: 1 / -1; font-size: 12px !important; }
+.release-setting { max-width: 680px; margin: 40px auto 0; border-top: 1px solid var(--ch-line); }
+.release-setting .preference-row { padding: 26px 0 0; }
+.release-setting .preference-row p { max-width: 480px; }
 .release-records { max-width: 780px; }
 .release-notes { margin: 36px 0 0; border-top: 1px solid var(--ch-line); border-bottom: 1px solid var(--ch-line); }
 .release-notes summary { display: flex; align-items: center; justify-content: space-between; gap: 20px; min-height: 56px; list-style: none; font-size: 13px; font-weight: 550; }

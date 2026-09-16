@@ -40,18 +40,20 @@ describe('onboarding entrypoint', () => {
     click(app.root, '[data-next]');
     expect(app.root.dataset.chapter).toBe('setup-filling');
     click(app.root, '#onboarding-auto-fill');
+    click(app.root, '#onboarding-direct-fill');
     click(app.root, '#onboarding-copy');
     click(app.root, '[data-language="en"]');
     await vi.waitFor(() => expect(app.root.querySelector('[data-primary]')?.textContent).toBe('Finish setup'));
     expect(app.root.dataset.chapter).toBe('setup-filling');
     expect(app.root.querySelector<HTMLInputElement>('#onboarding-auto-fill')?.checked).toBe(false);
+    expect(app.root.querySelector<HTMLInputElement>('#onboarding-direct-fill')?.checked).toBe(true);
     expect(app.root.querySelector<HTMLInputElement>('#onboarding-copy')?.checked).toBe(true);
     click(app.root, '#setup-filling [data-back]');
     expect(app.root.dataset.chapter).toBe('setup-access');
     click(app.root, '[data-next]');
     expect(app.values.get(SETTINGS_STORAGE_KEY)).not.toMatchObject({ onboardingComplete: true });
     click(app.root); await atPage(app.root, 'complete');
-    expect(app.values.get(SETTINGS_STORAGE_KEY)).toMatchObject({ accessMode: 'selected', autoFill: false, copyOnNoField: true, onboardingComplete: true });
+    expect(app.values.get(SETTINGS_STORAGE_KEY)).toMatchObject({ accessMode: 'selected', autoFill: false, directFill: true, copyOnNoField: true, onboardingComplete: true });
     expect(app.request).not.toHaveBeenCalled();
     expect(app.contains).not.toHaveBeenCalled();
     click(app.root, '[data-show-demo]');
@@ -131,6 +133,23 @@ describe('onboarding entrypoint', () => {
     expect(app.request).not.toHaveBeenCalled();
   });
 
+  it('offers the direct-fill switch on the installed introduction and saves it immediately', async () => {
+    const app = harness();
+    app.extension.runtime.getManifest = () => ({ version: '1.4.1', permissions: ['debugger'] });
+    app.values.set(SETTINGS_STORAGE_KEY, { ...DEFAULT_SETTINGS, autoFill: false, accessMode: 'all', onboardingComplete: true });
+    window.history.replaceState({}, '', '/onboarding.html?flow=upgrade&version=1.4.1');
+    await startOnboarding(app.root, app.extension, app.close);
+    const toggle = app.root.querySelector<HTMLInputElement>('#release-direct-fill')!;
+    expect(toggle.checked).toBe(false);
+    expect(app.root.querySelector('.release-setting')?.textContent).toContain('设置 → 静态验证码 → 填写');
+    toggle.checked = true;
+    toggle.dispatchEvent(new Event('change'));
+    await vi.waitFor(() => expect(app.values.get(SETTINGS_STORAGE_KEY)).toMatchObject({ directFill: true }));
+    click(app.root); await vi.waitFor(() => expect(app.close).toHaveBeenCalledOnce());
+    expect(app.values.get(SETTINGS_STORAGE_KEY)).toMatchObject({ lastSeenUpgradeGuide: '1.4.1', directFill: true, autoFill: false });
+    expect(app.request).not.toHaveBeenCalled();
+  });
+
   it('opens a historical introduction with its own notes and preserves the current release reminder', async () => {
     const app = harness();
     const saved = { ...DEFAULT_SETTINGS, lastSeenUpgradeGuide: '1.3.3', autoFill: false, onboardingComplete: true };
@@ -160,7 +179,7 @@ describe('onboarding entrypoint', () => {
     const app = harness();
     window.history.replaceState({}, '', '/onboarding.html?flow=history');
     await startOnboarding(app.root, app.extension, app.close);
-    expect(app.root.querySelectorAll('[data-release]')).toHaveLength(8);
+    expect(app.root.querySelectorAll('[data-release]')).toHaveLength(9);
     expect(app.root.querySelector('[data-current]')?.getAttribute('data-release')).toBe('1.4.0');
     expect(app.root.querySelector('[data-release="1.0.0"]')?.getAttribute('href')).toBe('onboarding.html?flow=upgrade&version=1.0.0&manual=1');
     expect(app.values.size).toBe(0);

@@ -5,10 +5,10 @@ import { releaseIntroductionMarkup } from '../../src/releases/view';
 describe('release issue links', () => {
   it('renders the issue references from both languages in introductions and full notes', () => {
     for (const locale of ['zh_CN', 'en'] as const) {
-      for (const [version, issues] of [['1.4.0', [15]], ['1.3.2', [14]], ['1.3.1', [11, 12]], ['1.3.0', [10]]] as const) {
+      for (const [version, issues] of [['1.4.1', [16, 16]], ['1.4.0', [15]], ['1.3.2', [14]], ['1.3.1', [11, 12]], ['1.3.0', [10]]] as const) {
         const release = releases.find((item) => item.version === version)!;
         const root = document.createElement('div');
-        root.innerHTML = releaseIntroductionMarkup(release, '1.4.0', locale);
+        root.innerHTML = releaseIntroductionMarkup(release, '1.4.1', locale);
         for (const issue of issues) {
           for (const section of ['.release-details', '.release-notes-body']) {
             const link = root.querySelector<HTMLAnchorElement>(`${section} a[href="https://github.com/hongshuo-wang/local-captcha-solver/issues/${issue}"]`);
@@ -19,6 +19,23 @@ describe('release issue links', () => {
         }
       }
     }
+  });
+
+  it('renders the direct-fill switch on the current introduction and reflects its saved state', () => {
+    const release = releases.find((item) => item.version === '1.4.1')!;
+    const off = document.createElement('div');
+    off.innerHTML = releaseIntroductionMarkup(release, '1.4.1', 'zh_CN');
+    expect(off.querySelector<HTMLInputElement>('#release-direct-fill')?.checked).toBe(false);
+    expect(off.querySelector('.release-setting')?.textContent).toContain('设置 → 静态验证码 → 填写');
+    const on = document.createElement('div');
+    on.innerHTML = releaseIntroductionMarkup(release, '1.4.1', 'zh_CN', { directFill: true });
+    expect(on.querySelector<HTMLInputElement>('#release-direct-fill')?.checked).toBe(true);
+    const older = document.createElement('div');
+    older.innerHTML = releaseIntroductionMarkup(releases.find((item) => item.version === '1.4.0')!, '1.4.1', 'zh_CN');
+    expect(older.querySelector('#release-direct-fill')).toBeNull();
+    const historical = document.createElement('div');
+    historical.innerHTML = releaseIntroductionMarkup(release, '9.9.9', 'zh_CN');
+    expect(historical.querySelector('#release-direct-fill')).toBeNull();
   });
 
   it('keeps inline code literal and escapes HTML and unsupported link destinations', () => {

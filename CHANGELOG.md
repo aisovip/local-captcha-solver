@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [1.4.1] - 2026-09-16
+
+### 中文
+
+- 新增“识别后直接填入”开关：开启后识别结果直接填入输入框，不再弹出确认提示，填错时可自行修改。可在“设置 → 静态验证码 → 填写”、首次安装引导或本版本介绍页中开启。[#16](https://github.com/hongshuo-wang/local-captcha-solver/issues/16)
+- 识别提示与确认面板不再遮挡验证码图片，会自动移到输入框旁边或下方，方便核对识别结果。[#16](https://github.com/hongshuo-wang/local-captcha-solver/issues/16)
+
+### English
+
+- New “Fill recognized results directly” switch: recognized answers are filled without a confirmation prompt and can be corrected by hand. Enable it in Settings → Static CAPTCHAs → Filling, during first-install setup, or from this release’s introduction. [#16](https://github.com/hongshuo-wang/local-captcha-solver/issues/16)
+- Recognition and confirmation prompts no longer cover the CAPTCHA image; they move beside or below the input so you can check each answer. [#16](https://github.com/hongshuo-wang/local-captcha-solver/issues/16)
+
 ## [1.4.0] - 2026-09-15
 
 ### 中文
