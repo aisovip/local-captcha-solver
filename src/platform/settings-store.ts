@@ -31,7 +31,7 @@ export function isRecognitionShortcut(value: unknown): value is RecognitionShort
 }
 
 export interface CaptchaSettings {
-  version: 8;
+  version: 9;
   accessMode: AccessMode;
   disabledHosts: string[];
   selectedSites: SelectedSiteRule[];
@@ -43,6 +43,7 @@ export interface CaptchaSettings {
   lastSeenUpgradeGuide: string | null;
   copyOnNoField: boolean;
   autoFill: boolean;
+  directFill: boolean;
   recognitionShortcut: RecognitionShortcut;
   interfaceLocale: InterfaceLocale;
   onboardingComplete: boolean;
@@ -55,6 +56,7 @@ export interface SettingsStore {
   disable(hostname: string): Promise<void>;
   setCopyOnNoField(enabled: boolean): Promise<void>;
   setAutoFill(enabled: boolean): Promise<void>;
+  setDirectFill(enabled: boolean): Promise<void>;
   setRecognitionShortcut(shortcut: RecognitionShortcut): Promise<void>;
   setAccessMode(mode: AccessMode, enabledHostname?: string): Promise<void>;
   addSelectedSite(rule: SelectedSiteRule): Promise<void>;
@@ -71,7 +73,7 @@ export interface SettingsStore {
 }
 
 export const DEFAULT_SETTINGS: CaptchaSettings = {
-  version: 8,
+  version: 9,
   accessMode: 'selected',
   disabledHosts: [],
   selectedSites: [],
@@ -83,6 +85,7 @@ export const DEFAULT_SETTINGS: CaptchaSettings = {
   lastSeenUpgradeGuide: null,
   copyOnNoField: false,
   autoFill: true,
+  directFill: false,
   recognitionShortcut: 'middle',
   interfaceLocale: 'system',
   onboardingComplete: false,
@@ -227,13 +230,13 @@ function parseSettings(value: unknown): CaptchaSettings {
     }
   }
   const candidate = value as Partial<Omit<CaptchaSettings, 'version'>> & { version?: unknown };
-  if ((candidate.version !== 3 && candidate.version !== 4 && candidate.version !== 5 && candidate.version !== 6 && candidate.version !== 7 && candidate.version !== 8) || !Array.isArray(candidate.disabledHosts) || !Array.isArray(candidate.selectedSites)) {
+  if ((candidate.version !== 3 && candidate.version !== 4 && candidate.version !== 5 && candidate.version !== 6 && candidate.version !== 7 && candidate.version !== 8 && candidate.version !== 9) || !Array.isArray(candidate.disabledHosts) || !Array.isArray(candidate.selectedSites)) {
     return freshSettings();
   }
 
   try {
     return {
-      version: 8,
+      version: 9,
       accessMode: isAccessMode(candidate.accessMode) ? candidate.accessMode : DEFAULT_SETTINGS.accessMode,
       disabledHosts: [...new Set(candidate.disabledHosts.map(normalizeHostname))].sort(),
       selectedSites: normalizeSelectedSites(candidate.selectedSites),
@@ -251,6 +254,7 @@ function parseSettings(value: unknown): CaptchaSettings {
       lastSeenUpgradeGuide: candidate.version >= 7 && (candidate.lastSeenUpgradeGuide === null || typeof candidate.lastSeenUpgradeGuide === 'string') ? candidate.lastSeenUpgradeGuide : null,
       copyOnNoField: candidate.copyOnNoField === true,
       autoFill: candidate.autoFill !== false,
+      directFill: candidate.version >= 9 && candidate.directFill === true,
       recognitionShortcut: isRecognitionShortcut(candidate.recognitionShortcut) ? candidate.recognitionShortcut : 'middle',
       interfaceLocale: isInterfaceLocale(candidate.interfaceLocale) ? candidate.interfaceLocale : 'system',
       onboardingComplete: candidate.onboardingComplete === true,
@@ -264,7 +268,7 @@ export function createSettingsStore(adapter: BrowserAdapter): SettingsStore {
   const read = async (): Promise<CaptchaSettings> => parseSettings(await adapter.getLocal<unknown>(SETTINGS_STORAGE_KEY));
   const write = async (settings: CaptchaSettings): Promise<void> => {
     await adapter.setLocal<CaptchaSettings>(SETTINGS_STORAGE_KEY, {
-      version: 8,
+      version: 9,
       accessMode: settings.accessMode,
       disabledHosts: [...new Set(settings.disabledHosts)].sort(),
       selectedSites: normalizeSelectedSites(settings.selectedSites),
@@ -276,6 +280,7 @@ export function createSettingsStore(adapter: BrowserAdapter): SettingsStore {
       lastSeenUpgradeGuide: settings.lastSeenUpgradeGuide,
       copyOnNoField: settings.copyOnNoField,
       autoFill: settings.autoFill,
+      directFill: settings.directFill,
       recognitionShortcut: settings.recognitionShortcut,
       interfaceLocale: settings.interfaceLocale,
       onboardingComplete: settings.onboardingComplete,
@@ -330,6 +335,13 @@ export function createSettingsStore(adapter: BrowserAdapter): SettingsStore {
       await mutate(async () => {
         const settings = await read();
         if (settings.autoFill !== enabled) await write({ ...settings, autoFill: enabled });
+      });
+    },
+    async setDirectFill(enabled: boolean): Promise<void> {
+      if (typeof enabled !== 'boolean') throw new Error('directFill must be a boolean');
+      await mutate(async () => {
+        const settings = await read();
+        if (settings.directFill !== enabled) await write({ ...settings, directFill: enabled });
       });
     },
     async setRecognitionShortcut(shortcut: RecognitionShortcut): Promise<void> {

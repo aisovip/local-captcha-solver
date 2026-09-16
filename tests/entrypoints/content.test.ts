@@ -618,6 +618,17 @@ describe('content runtime messages', () => {
     expect(statusText()).toContain('已填入验证码');
   });
 
+  it('fills a low-confidence result directly when the direct-fill preference is on', async () => {
+    vi.stubGlobal('defineContentScript', (value: unknown) => value); document.body.innerHTML = '<form><img id="image" alt="captcha" width="120" height="40" src="data:image/png;base64,AQ=="><input id="answer" aria-label="captcha"></form>';
+    const sendMessage = vi.fn(async (message: { type: string }) => message.type === 'captcha:recognize' ? [{ mode: 'letters', text: 'ABC', confidence: .94 }] : undefined);
+    const { createRuntimeContent } = await import('../../entrypoints/content'); const content = createRuntimeContent({ sendMessage, onMessage: { addListener: listener }, settings: { read: async () => ({ directFill: true }), subscribe: () => () => undefined } });
+    await vi.waitFor(() => expect(content.directFillEnabled()).toBe(true));
+    const result = await content.workflow.run(document.querySelector('#image') as HTMLImageElement, 'context');
+    expect(result).toMatchObject({ state: 'filled', fillValue: 'ABC' });
+    await vi.waitFor(() => expect((document.querySelector('#answer') as HTMLInputElement).value).toBe('ABC'));
+    expect(statusText()).toContain('已自动填入验证码');
+  });
+
   it('offers explicit replacement without overwriting a non-empty field', async () => {
     vi.stubGlobal('defineContentScript', (value: unknown) => value);
     document.body.innerHTML = '<form><img id="image" alt="captcha" width="120" height="40" src="data:image/png;base64,AQ=="><input id="answer" aria-label="captcha" value="old"></form>';

@@ -115,6 +115,21 @@ describe('createSettingsStore', () => {
     await expect(store.read()).resolves.toEqual({ ...defaults, copyOnNoField: true, autoFill: false });
   });
 
+  it('persists the direct-fill preference independently of auto-fill', async () => {
+    const store = createSettingsStore(adapterWith());
+    await store.setDirectFill(true);
+    await store.setAutoFill(false);
+    await expect(store.read()).resolves.toEqual({ ...defaults, directFill: true, autoFill: false });
+    await store.setDirectFill(false);
+    await expect(store.read()).resolves.toEqual({ ...defaults, autoFill: false });
+  });
+
+  it('migrates version 8 settings without enabling direct fill', async () => {
+    const { version: _version, directFill: _directFill, ...versionEight } = defaults;
+    const store = createSettingsStore(adapterWith({ ...versionEight, version: 8, autoFill: false }));
+    await expect(store.read()).resolves.toEqual({ ...defaults, autoFill: false });
+  });
+
   it.each(['127.0.0.1', '[::1]', 'localhost'])('supports local and IP hosts: %s', async (host) => {
     const store = createSettingsStore(adapterWith());
     await store.disable(host);
@@ -185,7 +200,7 @@ describe('createSettingsStore', () => {
 
   it('migrates existing settings without enabling slider automation on any site', async () => {
     const store = createSettingsStore(adapterWith({ ...defaults, version: 4, sliderEnabledHosts: undefined }));
-    await expect(store.read()).resolves.toMatchObject({ version: 8, sliderEnabledHosts: [], sliderDisabledHosts: [], sliderAccessMode: 'selected', sliderOnboardingChoice: undefined, lastSeenUpgradeGuide: null });
+    await expect(store.read()).resolves.toMatchObject({ version: 9, sliderEnabledHosts: [], sliderDisabledHosts: [], sliderAccessMode: 'selected', sliderOnboardingChoice: undefined, lastSeenUpgradeGuide: null });
   });
 
   it('stores slider automation as an exact-host permission independent of OCR access', async () => {
@@ -231,7 +246,7 @@ describe('createSettingsStore', () => {
 
   it('keeps slider onboarding choice empty until the user explicitly chooses a scope', async () => {
     const store = createSettingsStore(adapterWith({ ...defaults, version: 6, sliderAccessMode: 'all' }));
-    await expect(store.read()).resolves.toMatchObject({ version: 8, sliderAccessMode: 'all', sliderOnboardingChoice: undefined, lastSeenUpgradeGuide: null });
+    await expect(store.read()).resolves.toMatchObject({ version: 9, sliderAccessMode: 'all', sliderOnboardingChoice: undefined, lastSeenUpgradeGuide: null });
     await store.setSliderOnboardingChoice('selected');
     await store.setLastSeenUpgradeGuide('1.2.0');
     await expect(store.read()).resolves.toMatchObject({ sliderOnboardingChoice: 'selected', lastSeenUpgradeGuide: '1.2.0' });

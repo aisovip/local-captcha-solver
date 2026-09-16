@@ -72,6 +72,22 @@ describe('options entrypoint', () => {
     location.hash = '';
   });
 
+  it('persists the direct-fill preference from the filling section', async () => {
+    const app = harness();
+    app.values.set(SETTINGS_STORAGE_KEY, { ...DEFAULT_SETTINGS, directFill: true });
+    const root = document.createElement('div');
+    document.body.append(root);
+    await startOptions(root, app.extension);
+    const toggle = root.querySelector<HTMLInputElement>('#settings-direct-fill')!;
+    expect(toggle.checked).toBe(true);
+    toggle.checked = false;
+    toggle.dispatchEvent(new Event('change'));
+    await vi.waitFor(() => {
+      expect((app.values.get(SETTINGS_STORAGE_KEY) as { directFill?: boolean }).directFill).toBe(false);
+    });
+    root.remove();
+  });
+
   it('keeps settings focused on static recognition when sliders are unavailable', async () => {
     const app = harness();
     app.extension.runtime.getManifest = () => ({ version: '1.0.0', permissions: [] });

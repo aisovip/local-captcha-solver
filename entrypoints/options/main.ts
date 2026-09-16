@@ -245,7 +245,7 @@ function staticMarkup(settings: CaptchaSettings, globalGranted: boolean, selecte
     <section class="settings-section" aria-labelledby="static-filling-title">
       <h2 id="static-filling-title">${t('settingsFillingTitle')}</h2>
       <div class="settings-group">
-        <div class="setting-list">${switchControl('settings-auto-fill', settings.autoFill, t('autoFill'), t('autoFillBody'))}${switchControl('settings-copy', settings.copyOnNoField, t('copyOnNoField'), t('copyOnNoFieldBody'))}<label class="setting-row select-row" for="settings-shortcut"><span><strong>${t('shortcut')}</strong><small>${t('settingsShortcutBody')}</small></span><select id="settings-shortcut">${shortcutOptions(settings.recognitionShortcut, t)}</select></label></div>
+        <div class="setting-list">${switchControl('settings-auto-fill', settings.autoFill, t('autoFill'), t('autoFillBody'))}${switchControl('settings-direct-fill', settings.directFill, t('directFill'), t('directFillBody'))}${switchControl('settings-copy', settings.copyOnNoField, t('copyOnNoField'), t('copyOnNoFieldBody'))}<label class="setting-row select-row" for="settings-shortcut"><span><strong>${t('shortcut')}</strong><small>${t('settingsShortcutBody')}</small></span><select id="settings-shortcut">${shortcutOptions(settings.recognitionShortcut, t)}</select></label></div>
         ${siteDisclosure('static-types', t('settingsSiteTypes'), settings.siteRecognitionModes.length, t('settingsSiteTypesBody'), siteModeOverrides(settings.siteRecognitionModes, t))}
       </div>
     </section>`;
@@ -450,6 +450,7 @@ export async function startOptions(
     });
     root.querySelectorAll<HTMLButtonElement>('[data-mode], [data-grant-static]').forEach((button) => button.addEventListener('click', () => { void selectMode((button.dataset.mode ?? 'all') as 'all' | 'selected'); }));
     root.querySelector<HTMLInputElement>('#settings-auto-fill')?.addEventListener('change', (event) => { void settingsStore.setAutoFill((event.currentTarget as HTMLInputElement).checked); });
+    root.querySelector<HTMLInputElement>('#settings-direct-fill')?.addEventListener('change', (event) => { void settingsStore.setDirectFill((event.currentTarget as HTMLInputElement).checked); });
     root.querySelector<HTMLInputElement>('#settings-copy')?.addEventListener('change', (event) => { void settingsStore.setCopyOnNoField((event.currentTarget as HTMLInputElement).checked); });
     root.querySelector<HTMLSelectElement>('#settings-shortcut')?.addEventListener('change', (event) => {
       const value = (event.currentTarget as HTMLSelectElement).value;

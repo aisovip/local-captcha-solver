@@ -99,6 +99,36 @@ describe('captcha workflow', () => {
     expect(field.value).toBe('taken');
   });
 
+  it('fills a low-confidence result directly when direct fill is enabled', async () => {
+    await expect(workflow({ directFillEnabled: () => true, recognize: async () => [{ mode: 'letters', text: 'ABC', confidence: .94 }] }).run(image, 'explicit')).resolves.toMatchObject({ state: 'filled', fillValue: 'ABC' });
+    expect(field.value).toBe('ABC');
+  });
+  it('fills arithmetic recovered from ambiguous suffix evidence when direct fill is enabled', async () => {
+    await expect(workflow({ directFillEnabled: () => true, recognize: async () => [
+      { mode: 'digits', text: '7432', confidence: .98 },
+      { mode: 'arithmetic', text: '7*3', confidence: .99, requiresConfirmation: true },
+    ] }).run(image, 'explicit')).resolves.toMatchObject({ state: 'filled', displayText: '7*3 = 21', fillValue: '21' });
+  });
+  it('replaces an occupied field when direct fill is enabled', async () => {
+    await expect(workflow({ directFillEnabled: () => true, recognize: async () => { field.value = 'taken'; return [{ mode: 'digits', text: '1234', confidence: .9 }]; } }).run(image, 'explicit')).resolves.toMatchObject({ state: 'filled', fillValue: '1234' });
+    expect(field.value).toBe('1234');
+  });
+  it('fills the best-ranked field when the match is ambiguous and direct fill is enabled', async () => {
+    const first = document.createElement('input');
+    const second = document.createElement('input');
+    document.body.append(first, second);
+    const snapshot = () => ({ ...base.snapshot(), fields: [
+      { id: 'first', element: first, field: { id: 'first', type: 'text', value: '', visible: true, disabled: false, readOnly: false, distance: 20, sameForm: true, labelText: 'captcha' } },
+      { id: 'second', element: second, field: { id: 'second', type: 'text', value: '', visible: true, disabled: false, readOnly: false, distance: 20, sameForm: true, labelText: 'captcha' } },
+    ] });
+    await expect(workflow({ snapshot, directFillEnabled: () => true }).run(image, 'automatic')).resolves.toMatchObject({ state: 'filled', fieldId: 'first' });
+    expect(first.value).toBe('1234');
+  });
+  it('keeps confirmation when automatic filling is disabled even if direct fill is enabled', async () => {
+    await expect(workflow({ directFillEnabled: () => true, autoFillEnabled: () => false }).run(image, 'automatic')).resolves.toMatchObject({ state: 'needs_confirmation', reason: 'auto_fill_disabled' });
+    expect(field.value).toBe('');
+  });
+
   it('fills a uniquely matched textarea using Chinese captcha context', async () => {
     const textarea = document.createElement('textarea');
     document.body.append(textarea);

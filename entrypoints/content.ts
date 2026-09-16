@@ -30,6 +30,7 @@ function isSiteState(value: unknown): value is { enabled: boolean } { return typ
 function isCopyPreference(value: unknown): value is { copyOnNoField: boolean } { return typeof value === 'object' && value !== null && typeof (value as { copyOnNoField?: unknown }).copyOnNoField === 'boolean'; }
 function isSliderRunResult(value: unknown): value is SliderRunResult { return typeof value === 'object' && value !== null && SLIDER_RESULT_STATES.includes((value as { state?: unknown }).state as SliderResultState); }
 function autoFillFromSettings(value: unknown): boolean { return typeof value !== 'object' || value === null || (value as { autoFill?: unknown }).autoFill !== false; }
+function directFillFromSettings(value: unknown): boolean { return typeof value === 'object' && value !== null && (value as { directFill?: unknown }).directFill === true; }
 function shortcutFromSettings(value: unknown): RecognitionShortcut {
   if (typeof value !== 'object' || value === null) return 'middle';
   const shortcut = (value as { recognitionShortcut?: unknown }).recognitionShortcut;
@@ -94,6 +95,7 @@ export function createRuntimeContent(runtime: Runtime) {
   };
   const discoverSlider = () => discoverSliderChallenge(document, sliderElements());
   let autoFillEnabled = true;
+  let directFillEnabled = false;
   let recognitionModes = AUTOMATIC_MODES;
   let imageAccess: { requestId: string; image: HTMLImageElement; revision: string; imageOrigin: string } | undefined;
   let imageAccessPrompted = false;
@@ -124,6 +126,7 @@ export function createRuntimeContent(runtime: Runtime) {
     },
     recognitionModes: () => recognitionModes,
     autoFillEnabled: () => autoFillEnabled,
+    directFillEnabled: () => directFillEnabled,
     boundField: (image) => {
       const binding = textBinding();
       if (!binding || resolveBindingElement(binding.image) !== image) return undefined;
@@ -290,7 +293,7 @@ export function createRuntimeContent(runtime: Runtime) {
         actions.push({ label: text.reloadModel, kind: 'primary', onClick: async () => { await runtime.sendMessage({ type: 'captcha:retry-model-warmup' }); setTimeout(() => { void displayed.run(args[0], 'explicit'); }, 0); } });
       }
       const onDismiss = () => dismissedRevisions.set(args[0], imageRevision(args[0]));
-      showWorkflowStatus(result, field?.element ?? args[0], { actions, copyOutcome, onDismiss });
+      showWorkflowStatus(result, field?.element ?? args[0], { actions, copyOutcome, onDismiss, avoid: args[0] });
       if (result.state === 'permission_denied' && !imageAccessPrompted) {
         imageAccessPrompted = true;
         void runtime.sendMessage({ type: 'captcha:open-image-access' }).catch(() => undefined);
@@ -306,6 +309,7 @@ export function createRuntimeContent(runtime: Runtime) {
     if (shortcutGeneration === initialShortcutGeneration) {
       recognitionShortcut = shortcutFromSettings(settings);
       autoFillEnabled = autoFillFromSettings(settings);
+      directFillEnabled = directFillFromSettings(settings);
       recognitionModes = modesFromSettings(settings);
       uiLocale = localeFromSettings(settings, runtime.uiLanguage ?? 'zh-CN');
       text = CONTENT_TEXT[uiLocale];
@@ -327,6 +331,7 @@ export function createRuntimeContent(runtime: Runtime) {
     }).catch(() => undefined);
     recognitionShortcut = shortcutFromSettings(settings);
     autoFillEnabled = autoFillFromSettings(settings);
+    directFillEnabled = directFillFromSettings(settings);
     recognitionModes = modesFromSettings(settings);
     uiLocale = localeFromSettings(settings, runtime.uiLanguage ?? 'zh-CN');
     text = CONTENT_TEXT[uiLocale];
@@ -738,7 +743,7 @@ export function createRuntimeContent(runtime: Runtime) {
     loadBindings = runtime.bindings.read().then((value) => { if (bindingReadGeneration === generation) updateBindings(value); }).catch(() => undefined);
     unsubscribeBindings = runtime.bindings.subscribe((value) => { bindingReadGeneration += 1; updateBindings(value); });
   }
-  return { workflow: displayed, enable, disable };
+  return { workflow: displayed, enable, disable, directFillEnabled: () => directFillEnabled };
 }
 
 export default defineContentScript({ matches: [], registration: 'runtime', main() {

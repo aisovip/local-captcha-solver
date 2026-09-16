@@ -34,6 +34,24 @@ describe('status UI', () => {
     expect(onConfirm).toHaveBeenCalledOnce();
   });
 
+  it('keeps the confirmation panel from covering the captcha image', () => {
+    const field = document.createElement('input');
+    const captcha = document.createElement('img');
+    document.body.append(field, captcha);
+    vi.spyOn(field, 'getBoundingClientRect').mockReturnValue({ left: 40, top: 60, right: 180, bottom: 96, width: 140, height: 36, x: 40, y: 60, toJSON: () => ({}) });
+    vi.spyOn(captcha, 'getBoundingClientRect').mockReturnValue({ left: 190, top: 40, right: 310, bottom: 100, width: 120, height: 60, x: 190, y: 40, toJSON: () => ({}) });
+    const panelBounds = () => {
+      const left = Number.parseInt(host()?.style.left ?? '0', 10);
+      const top = Number.parseInt(host()?.style.top ?? '0', 10);
+      return { left, top, right: left + 336, bottom: top + 112 };
+    };
+    showWorkflowStatus({ state: 'needs_confirmation', candidateId: 'image-1', displayText: 'A8K2', fillValue: 'A8K2', fieldIds: ['field-1'] }, field, { avoid: captcha });
+    const positioned = panelBounds();
+    expect(positioned.left < 310 && positioned.right > 190 && positioned.top < 100 && positioned.bottom > 40).toBe(false);
+    showWorkflowStatus({ state: 'needs_confirmation', candidateId: 'image-1', displayText: 'A8K2', fillValue: 'A8K2', fieldIds: ['field-1'] }, field);
+    expect(panelBounds().left).toBe(190);
+  });
+
   it('distinguishes model preparation from recognition and keeps running state visible', async () => {
     vi.useFakeTimers();
     showRecognizing(undefined, 'preparing');

@@ -21,6 +21,7 @@ export interface WorkflowStatusOptions {
   actions?: readonly StatusAction[];
   copyOutcome?: CopyOutcome;
   onDismiss?: () => void;
+  avoid?: Element;
 }
 
 const ICONS: Record<StatusTone, string> = {
@@ -133,7 +134,7 @@ function overlapArea(left: number, top: number, width: number, height: number, r
   return overlapWidth * overlapHeight;
 }
 
-function position(host: HTMLElement, anchor: Element | undefined): void {
+function position(host: HTMLElement, anchor: Element | undefined, avoid?: Element): void {
   const width = globalThis.innerWidth <= 600 ? Math.max(0, globalThis.innerWidth - 24) : Math.min(336, globalThis.innerWidth - 24);
   const height = host.getBoundingClientRect().height || 112;
   Object.assign(host.style, { width: `${width}px`, right: 'auto', bottom: 'auto' });
@@ -172,6 +173,9 @@ function position(host: HTMLElement, anchor: Element | undefined): void {
     .filter((element) => element.isConnected && element.getClientRects().length > 0)
     .map((element) => element.getBoundingClientRect());
   blockers.push(rect);
+  const avoidRectRaw = avoid?.isConnected ? avoid.getBoundingClientRect() : undefined;
+  const avoidRect = avoidRectRaw && avoidRectRaw.bottom > 0 && avoidRectRaw.top < innerHeight && avoidRectRaw.right > 0 && avoidRectRaw.left < innerWidth ? avoidRectRaw : undefined;
+  if (avoidRect !== undefined) blockers.push(avoidRect);
   const ranked = candidates.map((candidate, index) => {
     const left = clampLeft(candidate.left);
     const top = clampTop(candidate.top);
@@ -188,7 +192,7 @@ function show(
   anchor: Element | undefined,
   tone: StatusTone,
   actions: readonly StatusAction[] = [],
-  options: { timeoutMs?: number; onDismiss?: () => void; detail?: string; value?: string; highlight?: boolean; presentation?: StatusPresentation; nonInteractive?: boolean; statusKind?: 'workflow' | 'slider' | 'slider-user-active' } = {},
+  options: { timeoutMs?: number; onDismiss?: () => void; detail?: string; value?: string; highlight?: boolean; presentation?: StatusPresentation; nonInteractive?: boolean; statusKind?: 'workflow' | 'slider' | 'slider-user-active'; avoid?: Element } = {},
 ): void {
   clearCurrent();
   const host = document.createElement('div');
@@ -285,7 +289,7 @@ function show(
       }
       if (action.closeOnSuccess === false) { button.disabled = false; return; }
       clearCurrent();
-      if (action.successMessage) show(action.successMessage, anchor, 'success', [], { timeoutMs: 2400, value: options.value, highlight: true, presentation: 'toast', statusKind: options.statusKind });
+      if (action.successMessage) show(action.successMessage, anchor, 'success', [], { timeoutMs: 2400, value: options.value, highlight: true, presentation: 'toast', statusKind: options.statusKind, avoid: options.avoid });
     });
     actionsElement.append(button);
   }
@@ -298,7 +302,7 @@ function show(
   if (options.highlight && anchor?.isConnected) shadow.prepend(highlight);
   const highlightTimer = setTimeout(() => highlight.remove(), 1600);
   const updatePosition = () => {
-    position(host, anchor);
+    position(host, anchor, options.avoid);
     if (highlight.isConnected && anchor?.isConnected) {
       const rect = anchor.getBoundingClientRect();
       Object.assign(highlight.style, { left: `${rect.left - 3}px`, top: `${rect.top - 3}px`, width: `${rect.width + 6}px`, height: `${rect.height + 6}px` });
@@ -335,33 +339,33 @@ export function showWorkflowStatus(
     : { ...(legacyConfirmOrOptions ?? {}), copyOutcome: legacyConfirmOrOptions?.copyOutcome ?? legacyCopyOutcome };
   const value = 'displayText' in result ? result.displayText || result.fillValue : '';
   if (result.state === 'filled') {
-    show(localized('已自动填入验证码', 'CAPTCHA filled automatically'), anchor, 'success', [], { timeoutMs: 2600, value, highlight: true, detail: localized('已填入高亮的输入框，请检查后提交。', 'Filled the highlighted input. Review before submitting.'), presentation: 'toast', statusKind: 'workflow' });
+    show(localized('已自动填入验证码', 'CAPTCHA filled automatically'), anchor, 'success', [], { timeoutMs: 2600, value, highlight: true, detail: localized('已填入高亮的输入框，请检查后提交。', 'Filled the highlighted input. Review before submitting.'), presentation: 'toast', statusKind: 'workflow', avoid: options.avoid });
     return;
   }
   if (result.state === 'needs_confirmation') {
     const detail = result.fillValue === undefined ? localized('未得到可安全使用的结果，请刷新验证码后重试。', 'No safe result was produced. Refresh the CAPTCHA and retry.') : result.reason === 'field_not_empty' ? localized('填入将替换输入框中的现有内容。', 'Filling will replace the current input value.') : localized('请核对图片中的内容，再选择填入或复制。', 'Check against the image, then choose Fill or Copy.');
     const confirmations = statusLocale === 'zh_CN' ? CONFIRMATION_MESSAGES : EN_CONFIRMATION_MESSAGES;
-    show(result.reason === undefined ? localized('结果需要确认', 'The result needs confirmation') : confirmations[result.reason], anchor, 'warning', options.actions, { detail, value: result.fillValue === undefined ? undefined : value, highlight: true, onDismiss: options.onDismiss, statusKind: 'workflow' });
+    show(result.reason === undefined ? localized('结果需要确认', 'The result needs confirmation') : confirmations[result.reason], anchor, 'warning', options.actions, { detail, value: result.fillValue === undefined ? undefined : value, highlight: true, onDismiss: options.onDismiss, statusKind: 'workflow', avoid: options.avoid });
     return;
   }
   if (result.state === 'no_field') {
     const copyDetail = options.copyOutcome === 'copied' ? localized('已复制到剪贴板', 'Copied to the clipboard') : options.copyOutcome === 'failed' ? localized('自动复制失败', 'Automatic copy failed') : localized('未找到对应输入框', 'No matching input was found');
     const title = options.copyOutcome === 'copied' ? localized('识别完成并已复制', 'Recognized and copied') : options.actions?.length ? localized('识别完成，请选择操作', 'Recognition complete; choose an action') : localized('识别完成', 'Recognition complete');
     const presentation: StatusPresentation = options.copyOutcome === 'copied' && (options.actions?.length ?? 0) === 0 ? 'toast' : 'panel';
-    show(title, anchor, options.copyOutcome === 'failed' ? 'error' : options.copyOutcome === 'copied' ? 'success' : 'neutral', options.actions, { value, detail: copyDetail, highlight: true, onDismiss: options.onDismiss, presentation, statusKind: 'workflow' });
+    show(title, anchor, options.copyOutcome === 'failed' ? 'error' : options.copyOutcome === 'copied' ? 'success' : 'neutral', options.actions, { value, detail: copyDetail, highlight: true, onDismiss: options.onDismiss, presentation, statusKind: 'workflow', avoid: options.avoid });
     return;
   }
   if (result.state === 'permission_denied') {
     show(localized('需要允许读取验证码图片', 'Allow access to the CAPTCHA image'), anchor, 'warning', options.actions, {
       detail: localized('浏览器需要你的允许才能读取这张图片。请在授权提示中确认。', 'Your browser needs permission to read this image. Confirm access when prompted.'),
-      onDismiss: options.onDismiss, statusKind: 'workflow',
+      onDismiss: options.onDismiss, statusKind: 'workflow', avoid: options.avoid,
     });
     return;
   }
   if (result.state === 'image_unavailable' && result.reason === 'viewport') {
     show(localized('请完整显示验证码后重试', 'Show the entire CAPTCHA and retry'), anchor, 'warning', options.actions, {
       detail: localized('验证码需要完整位于当前页面的可见区域，并且没有被其他内容遮挡。', 'The CAPTCHA must be fully visible on the current page and unobstructed.'),
-      onDismiss: options.onDismiss, statusKind: 'workflow',
+      onDismiss: options.onDismiss, statusKind: 'workflow', avoid: options.avoid,
     });
     return;
   }
@@ -373,6 +377,7 @@ export function showWorkflowStatus(
     onDismiss: options.onDismiss,
     presentation: persistent ? 'panel' : 'toast',
     statusKind: 'workflow',
+    avoid: options.avoid,
   });
 }
 

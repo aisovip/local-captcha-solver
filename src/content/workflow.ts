@@ -3,13 +3,13 @@ import { AUTOMATIC_CANDIDATE_THRESHOLD, scoreCaptchaCandidate } from '../core/ca
 import { matchCaptchaField } from '../core/field-matcher';
 import { resultInterpreter } from '../core/result-interpreter';
 import type { OcrResult, RecognitionMode, WorkflowResult } from '../core/types';
-import { fillEmptyField, fillPlaceholderField } from './field-fill';
+import { fillEmptyField, fillPlaceholderField, replaceField } from './field-fill';
 import type { ImageAcquisitionResult } from './image-source';
 import { snapshotForImage, type ImageDetailSnapshot, type TextFieldElement } from './dom-snapshot';
 
 export type WorkflowTrigger = 'automatic' | 'explicit' | 'context';
 export interface CaptchaWorkflow { run(image: HTMLImageElement, trigger: WorkflowTrigger): Promise<WorkflowResult>; cancel?(image: HTMLImageElement): void; cancelAll?(): void; invalidate?(image: HTMLImageElement): void; }
-export interface CaptchaWorkflowOptions { snapshot?: (image: HTMLImageElement) => ImageDetailSnapshot | undefined; acquire: (image: HTMLImageElement) => Promise<ImageAcquisitionResult>; recognize: (dataUrl: string, revision: string, modes: readonly RecognitionMode[]) => Promise<readonly OcrResult[]>; recognitionModes?: () => readonly RecognitionMode[]; autoFillEnabled?: () => boolean; boundField?: (image: HTMLImageElement) => TextFieldElement | null | undefined; }
+export interface CaptchaWorkflowOptions { snapshot?: (image: HTMLImageElement) => ImageDetailSnapshot | undefined; acquire: (image: HTMLImageElement) => Promise<ImageAcquisitionResult>; recognize: (dataUrl: string, revision: string, modes: readonly RecognitionMode[]) => Promise<readonly OcrResult[]>; recognitionModes?: () => readonly RecognitionMode[]; autoFillEnabled?: () => boolean; directFillEnabled?: () => boolean; boundField?: (image: HTMLImageElement) => TextFieldElement | null | undefined; }
 interface RequestRecord { revision: string; priority: number; token: number; promise: Promise<WorkflowResult>; generation: number; settled: boolean; boundTarget?: TextFieldElement; }
 const MODES: readonly RecognitionMode[] = ['digits', 'letters', 'alphanumeric', 'arithmetic'];
 const ARITHMETIC_CONFIDENCE_DEFICIT = 0.1;
@@ -78,7 +78,8 @@ export function createCaptchaWorkflow(options: CaptchaWorkflowOptions): CaptchaW
     if (record.boundTarget && !bound) return stale(candidateId);
     const match = bound ? { state: 'unique' as const, winner: bound.field } : matchCaptchaField(image, current.fields.map((field) => field.field));
     if (match.state === 'none') return { state: 'no_field', candidateId, displayText: selected.displayText, fillValue: selected.fillValue, confidence: selected.confidence };
-    if (!chosen.safe) return { state: 'needs_confirmation', candidateId, displayText: selected.displayText, fillValue: selected.fillValue, confidence: selected.confidence, fieldIds: match.state === 'unique' ? [match.winner.id] : match.candidates.map((item) => item.field.id), reason: 'low_confidence' };
+    const direct = options.directFillEnabled?.() === true;
+    if (!chosen.safe && !direct) return { state: 'needs_confirmation', candidateId, displayText: selected.displayText, fillValue: selected.fillValue, confidence: selected.confidence, fieldIds: match.state === 'unique' ? [match.winner.id] : match.candidates.map((item) => item.field.id), reason: 'low_confidence' };
     if (options.autoFillEnabled?.() === false) return { state: 'needs_confirmation', candidateId, displayText: selected.displayText, fillValue: selected.fillValue, confidence: selected.confidence, fieldIds: match.state === 'unique' ? [match.winner.id] : match.candidates.map((item) => item.field.id), reason: 'auto_fill_disabled' };
     if (match.state !== 'unique' && trigger !== 'automatic' && (document.activeElement instanceof HTMLInputElement || document.activeElement instanceof HTMLTextAreaElement)) {
       const focused = document.activeElement;
@@ -86,13 +87,16 @@ export function createCaptchaWorkflow(options: CaptchaWorkflowOptions): CaptchaW
       const focusedFill = fillEmptyField(focused, selected.fillValue);
       if (focusedFill.state === 'filled') return { state: 'filled', candidateId, fieldId: focusedId, displayText: selected.displayText, fillValue: selected.fillValue, confidence: selected.confidence };
     }
-    if (match.state === 'ambiguous') return { state: 'needs_confirmation', candidateId, displayText: selected.displayText, fillValue: selected.fillValue, confidence: selected.confidence, fieldIds: match.candidates.map((item) => item.field.id), reason: 'ambiguous_field' };
-    const target = current.fields.find((field) => field.id === match.winner.id); if (!target || !valid(image, record)) return stale(candidateId);
+    if (match.state === 'ambiguous' && !direct) return { state: 'needs_confirmation', candidateId, displayText: selected.displayText, fillValue: selected.fillValue, confidence: selected.confidence, fieldIds: match.candidates.map((item) => item.field.id), reason: 'ambiguous_field' };
+    const resolvedField = match.state === 'unique' ? match.winner : match.candidates[0]!.field;
+    const target = current.fields.find((field) => field.id === resolvedField.id); if (!target || !valid(image, record)) return stale(candidateId);
     const placeholderValue = target.field.placeholderValue;
-    if (target.element.value !== '' && target.element.value !== placeholderValue) return { state: 'needs_confirmation', candidateId, displayText: selected.displayText, fillValue: selected.fillValue, confidence: selected.confidence, fieldIds: [target.id], reason: 'field_not_empty' };
+    if (target.element.value !== '' && target.element.value !== placeholderValue && !direct) return { state: 'needs_confirmation', candidateId, displayText: selected.displayText, fillValue: selected.fillValue, confidence: selected.confidence, fieldIds: [target.id], reason: 'field_not_empty' };
     const fill = target.element.value === ''
       ? fillEmptyField(target.element, selected.fillValue)
-      : fillPlaceholderField(target.element, selected.fillValue, placeholderValue!);
+      : target.element.value === placeholderValue
+        ? fillPlaceholderField(target.element, selected.fillValue, placeholderValue!)
+        : replaceField(target.element, selected.fillValue);
     return fill.state === 'filled' ? { state: 'filled', candidateId, fieldId: target.id, displayText: selected.displayText, fillValue: selected.fillValue, confidence: selected.confidence } : fill.state === 'stale' ? stale(candidateId) : fill.state === 'not_empty' ? { state: 'needs_confirmation', candidateId, displayText: selected.displayText, fillValue: selected.fillValue, confidence: selected.confidence, fieldIds: [target.id], reason: 'field_not_empty' } : { state: 'no_field', candidateId, displayText: selected.displayText, fillValue: selected.fillValue, confidence: selected.confidence };
   }
   return {
